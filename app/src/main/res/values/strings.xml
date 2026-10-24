@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">PS5 Çeviri</string>
+    <string name="notification_channel_name">Çeviri overlay\'i</string>
+    <string name="notification_title">Çeviri overlay\'i çalışıyor</string>
+    <string name="notification_text">Bağlantı portu: %1$d</string>
+</resources>

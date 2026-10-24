@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- TV launcher banner'ı (320x180dp): koyu zemin üzerinde konuşma balonu ve altyazı çizgileri. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="320dp"
+    android:height="180dp"
+    android:viewportWidth="320"
+    android:viewportHeight="180">
+    <path
+        android:fillColor="#FF0B1E3F"
+        android:pathData="M0,0h320v180h-320z" />
+    <path
+        android:fillColor="#FF1F6FEB"
+        android:pathData="M110,40h100a14,14 0,0 1,14 14v52a14,14 0,0 1,-14 14h-56l-22,20v-20h-22a14,14 0,0 1,-14 -14v-52a14,14 0,0 1,14 -14z" />
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M122,64h76a6,6 0,0 1,0 12h-76a6,6 0,0 1,0 -12z" />
+    <path
+        android:fillColor="#CCFFFFFF"
+        android:pathData="M136,88h48a6,6 0,0 1,0 12h-48a6,6 0,0 1,0 -12z" />
+</vector>
