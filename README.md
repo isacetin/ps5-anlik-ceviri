@@ -27,13 +27,15 @@ Oyunu her zamanki gibi TV'den, gecikmesiz izlersiniz. Bilgisayar aynı görünt�
 
 ## İndirme
 
+Son sürümü **[Releases](https://github.com/isacetin/ps5-anlik-ceviri/releases/latest)** sayfasından
+indirin:
+
 | Sistem | Dosya | Boyut |
 |---|---|---|
-| Mac (Apple Silicon) | `Anlık Çeviri_0.1.0_aarch64.dmg` | 13 MB |
-| Windows (64 bit) | `Anlık Çeviri_0.1.0_x64-setup.exe` | 12 MB |
+| Mac (Apple Silicon) | `AnlikCeviri_0.1.0_mac_aarch64.dmg` | 13 MB |
+| Windows (64 bit) | `AnlikCeviri_0.1.0_windows_x64-setup.exe` | 12 MB |
 
-Kurulum dosyaları şimdilik GitHub'da **Actions → Paketler** sayfasındaki son çalışmanın
-**Artifacts** bölümündedir. TV uygulaması dosyalara gömülüdür; ayrıca indirmeniz gerekmez.
+TV uygulaması dosyalara gömülüdür; ayrıca indirmeniz gerekmez.
 
 ## Kurulum
 

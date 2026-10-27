@@ -1,5 +1,7 @@
 # Kurulum paketleri: TV uygulaması (APK) derlenir, masaüstü uygulamasına gömülür; Mac için .dmg,
 # Windows için .exe kurulum dosyası üretilir. Uzun sürdüğü için elle ya da sürüm etiketiyle çalışır.
+# Etiketle (ör. v0.2.0) çalışınca paketler GitHub Releases'te yayınlanır; sürüm notları
+# docs/surum-notlari/<etiket>.md dosyasından alınır.
 # Paketler henüz imzasızdır (Mac: Gatekeeper uyarısı, Windows: SmartScreen uyarısı).
 name: Paketler
 
@@ -60,3 +62,30 @@ jobs:
           name: anlik-ceviri-${{ matrix.name }}
           path: ${{ matrix.output }}
           if-no-files-found: error
+
+  release:
+    name: Sürümü yayınla
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: desktop
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: paketler
+      # GitHub, sürüm dosyası adlarındaki boşluk ve Türkçe karakterleri bozabiliyor; ASCII adlar.
+      - name: Dosya adları
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          mkdir yayin
+          cp paketler/anlik-ceviri-macOS/*.dmg "yayin/AnlikCeviri_${version}_mac_aarch64.dmg"
+          cp paketler/anlik-ceviri-Windows/*.exe "yayin/AnlikCeviri_${version}_windows_x64-setup.exe"
+          ls -la yayin
+      - uses: softprops/action-gh-release@v2
+        with:
+          name: Anlık Çeviri ${{ github.ref_name }}
+          body_path: docs/surum-notlari/${{ github.ref_name }}.md
+          files: yayin/*
+          fail_on_unmatched_files: true

@@ -276,6 +276,22 @@ python3 tools/ws_test.py TV_IP
 Script sırasıyla heartbeat, liste değişimi, boş listeyle temizleme, 3 sn timeout, eski `seq` ve bozuk
 JSON senaryolarını gösterir.
 
+## Sürüm yayınlama
+
+1. Sürüm numarasını üç yerde artırın: `desktop/app/tauri.conf.json` (`version`), `desktop/Cargo.toml`
+   (`workspace.package.version`) ve TV uygulaması değiştiyse `app/build.gradle.kts`
+   (`versionCode` + `versionName`; kurulum sihirbazı TV'deki eski sürümü bu kodla tanıyıp günceller).
+2. Sürüm notlarını `docs/surum-notlari/vX.Y.Z.md` dosyasına yazın.
+3. Etiketi itin:
+
+```bash
+git tag v0.2.0 && git push origin v0.2.0
+```
+
+"Paketler" iş akışı TV APK'sını, Mac `.dmg`'sini ve Windows `.exe`'sini derler ve
+[Releases](https://github.com/isacetin/ps5-anlik-ceviri/releases)'te yayınlar (dosya adları ASCII:
+`AnlikCeviri_<sürüm>_mac_aarch64.dmg`, `AnlikCeviri_<sürüm>_windows_x64-setup.exe`).
+
 ## Swift aracıyla elle kurulum (eski yöntem)
 
 Masaüstü uygulaması ve kurulum sihirbazından önceki yöntem; geliştirmede hâlâ işe yarar. Swift
