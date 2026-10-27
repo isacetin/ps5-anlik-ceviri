@@ -458,6 +458,18 @@ Ayarlardaki **"Çevirileri nerede göster?"** seçeneğiyle çeviri TV'de, bu bi
 (oyun penceresinin üstünde, şeffaf ve tıklamayı geçiren bir katman) ya da ikisinde gösterilir. Ekran
 modu Android TV gerektirmez: Samsung/LG televizyonlarla ya da oyunu bilgisayardan oynarken kullanılır.
 
+**Kurulum paketleri:** Mac için `.dmg`, Windows için Türkçe `.exe` kurulum dosyası GitHub Actions'taki
+"Paketler" iş akışıyla üretilir (Actions → Paketler → Run workflow, ya da `v` ile başlayan bir etiket).
+İş akışı önce TV APK'sını derler ve masaüstü uygulamasına gömer. Yerelde Mac paketi için:
+
+```bash
+./gradlew assembleRelease && cd desktop/app && CI=true cargo tauri build --bundles app,dmg
+```
+
+(`cargo install tauri-cli --version "^2" --locked` gerekir; `CI=true`, DMG penceresini Finder'a
+AppleScript ile düzenletmeyi atlar.) Paketler henüz imzasızdır: Mac'te Gatekeeper, Windows'ta
+SmartScreen uyarı verir. Mac paketi yerel (ad-hoc) imzayla uygulama kimliğini taşır.
+
 Arayüzü uygulamayı açmadan görmek için `desktop/app/dev/preview.html` tarayıcıda açılabilir (sahte
 verilerle; `?calisiyor` ve `?ayarlar` parametreleri farklı durumları gösterir).
 

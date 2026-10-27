@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Tauri bunu paketin Info.plist'ine ekler. macOS Yerel Ağ izni için açıklama ve aranan Bonjour
+     servisi zorunludur; olmadan paketli uygulama TV'yi ağda bulamaz. -->
+<plist version="1.0">
+<dict>
+  <key>NSLocalNetworkUsageDescription</key>
+  <string>Anlık Çeviri, çevirileri göstermek için TV'nize yerel ağ üzerinden bağlanır ve TV uygulamasını kurar.</string>
+  <key>NSBonjourServices</key>
+  <array>
+    <string>_ps5ceviri._tcp</string>
+  </array>
+</dict>
+</plist>

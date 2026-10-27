@@ -56,13 +56,18 @@ async fn blocking<T: Send + 'static>(job: impl FnOnce() -> T + Send + 'static) -
 #[tauri::command]
 pub async fn setup_status(controller: State<'_, Controller>) -> Result<SetupStatus, String> {
     let setup_done = controller.status().settings.setup_done;
-    blocking(move || SetupStatus {
-        platform: if cfg!(target_os = "macos") { "macos" } else { "windows" },
-        screen_recording: ceviri_platform::screen_recording_granted(),
-        remote_play: ceviri_platform::remote_play_open().unwrap_or(false),
-        tv_apk_available: !TV_APK.is_empty(),
-        has_deepl_key: storage::deepl_key().is_some(),
-        setup_done,
+    blocking(move || {
+        let screen_recording = ceviri_platform::screen_recording_granted();
+        SetupStatus {
+            platform: if cfg!(target_os = "macos") { "macos" } else { "windows" },
+            screen_recording,
+            // Pencere listesi ekran içeriğine erişir: izin yokken bakmak macOS'un izin penceresini,
+            // kullanıcı izin adımına gelmeden açardı.
+            remote_play: screen_recording != Some(false) && ceviri_platform::remote_play_open().unwrap_or(false),
+            tv_apk_available: !TV_APK.is_empty(),
+            has_deepl_key: storage::deepl_key().is_some(),
+            setup_done,
+        }
     })
     .await
 }

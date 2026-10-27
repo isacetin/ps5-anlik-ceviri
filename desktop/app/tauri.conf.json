@@ -34,7 +34,20 @@
       "icons/icon.ico"
     ],
     "macOS": {
-      "minimumSystemVersion": "15.0"
+      "minimumSystemVersion": "15.0",
+      "signingIdentity": "-"
+    },
+    "category": "Utility",
+    "shortDescription": "Oyunlardaki İngilizce yazıları anlık Türkçeye çevirir",
+    "copyright": "© 2026 isacetin",
+    "windows": {
+      "nsis": {
+        "languages": [
+          "Turkish",
+          "English"
+        ],
+        "displayLanguageSelector": false
+      }
     }
   }
 }
