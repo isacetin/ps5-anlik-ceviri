@@ -6,8 +6,31 @@ use std::collections::{BTreeMap, HashMap};
 use std::io;
 use std::path::{Path, PathBuf};
 
+/// `CEVIRI_DATA_DIR` verilmişse o klasör (testler ve geliştirme için).
 pub fn app_dir() -> Option<PathBuf> {
+    if let Some(dir) = std::env::var_os("CEVIRI_DATA_DIR").filter(|d| !d.is_empty()) {
+        return Some(PathBuf::from(dir));
+    }
     dirs::data_dir().map(|dir| dir.join("PS5Ceviri"))
+}
+
+pub fn settings_path() -> Option<PathBuf> {
+    app_dir().map(|dir| dir.join("settings.json"))
+}
+
+/// Anahtarı dosyaya yazar; Mac/Linux'ta yalnızca kullanıcı okuyabilir (600).
+pub fn save_deepl_key(key: &str) -> io::Result<()> {
+    let path = deepl_key_path().ok_or_else(|| io::Error::other("uygulama klasörü bulunamadı"))?;
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    std::fs::write(&path, key.trim())?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
+    }
+    Ok(())
 }
 
 pub fn deepl_key_path() -> Option<PathBuf> {

@@ -1,7 +1,7 @@
 # Masaüstü tarafı (Mac + Windows). `core` platformdan bağımsızdır ve her iki işletim sisteminde
 # CI'da test edilir; platforma özel yakalama/OCR kodu ayrı crate'lerde durur.
 [workspace]
-members = ["cli", "core", "engine", "mac", "windows", "winprobe"]
+members = ["app", "cli", "core", "engine", "mac", "platform", "windows", "winprobe"]
 resolver = "2"
 
 [workspace.package]
@@ -12,6 +12,7 @@ version = "0.1.0"
 ceviri-core = { path = "core" }
 ceviri-engine = { path = "engine" }
 ceviri-mac = { path = "mac" }
+ceviri-platform = { path = "platform" }
 ceviri-windows = { path = "windows" }
 image = { version = "0.25", default-features = false, features = ["png"] }
 serde = { version = "1", features = ["derive"] }

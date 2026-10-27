@@ -1,14 +1,13 @@
 //! `ceviri`: masaüstü iş hattını platform katmanıyla birlikte çalıştıran komut satırı aracı.
 //! Ana thread olay döngüsünü çalıştırır, iş worker thread'de yapılır (GUI uygulamasıyla aynı düzen).
 
-mod platform;
-
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use ceviri_core::{block_merger, storage, ReadError, Stabilizer};
 use ceviri_engine::{discovery, tv_client, Config, DeepLClient, Event, Pipeline, TvClient};
+use ceviri_platform as platform;
 
 const USAGE: &str = "\
 Kullanım:

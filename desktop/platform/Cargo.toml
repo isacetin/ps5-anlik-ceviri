@@ -1,0 +1,14 @@
+[package]
+name = "ceviri-platform"
+description = "İşletim sistemine göre ekran okuma katmanı seçimi (Mac: ceviri-mac, Windows: ceviri-windows)"
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+ceviri-core.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+ceviri-mac.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+ceviri-windows.workspace = true

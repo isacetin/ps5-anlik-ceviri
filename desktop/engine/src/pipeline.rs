@@ -73,6 +73,12 @@ impl Pipeline {
         Pipeline { reader, tv, config, stop: Arc::new(AtomicBool::new(false)) }
     }
 
+    /// Döngüyü dışarıdaki bir bayrağa bağlar (döngü kurulmadan önce oluşturulan "Durdur" düğmesi gibi).
+    pub fn with_stop(mut self, stop: Arc<AtomicBool>) -> Pipeline {
+        self.stop = stop;
+        self
+    }
+
     /// Başka bir thread'den `store(true)` ile döngü durdurulur; çıkarken TV ekranı temizlenir.
     pub fn stop_handle(&self) -> Arc<AtomicBool> {
         self.stop.clone()

@@ -418,9 +418,11 @@ Tüm Mac seçenekleri için: [mac/README.md](mac/README.md).
 │   ├── Sources/CeviriBridge/    PS5CeviriMac'i Rust'a açan C ABI (statik kütüphane)
 │   └── Sources/ps5ceviri/       DeepL, WebSocket, TV bulma, komut satırı
 ├── desktop/                     Mac + Windows masaüstü uygulaması (Rust workspace, geliştiriliyor)
+│   ├── app/                     Masaüstü uygulaması (Tauri): Başlat/Durdur, durum, ayarlar, DeepL anahtarı
 │   ├── core/                    Platformdan bağımsız mantık: PS5CeviriCore'un Rust karşılığı
 │   ├── engine/                  Çalışan iş hattı: TV istemcisi, mDNS ile TV bulma, DeepL, ana döngü
 │   ├── mac/                     Mac platform katmanı: CeviriBridge'i derleyip bağlar (build.rs)
+│   ├── platform/                İşletim sistemine göre okuyucu seçimi (uygulama ve CLI ortak kullanır)
 │   ├── windows/                 Windows platform katmanı: Windows.Graphics.Capture + Windows.Media.Ocr
 │   ├── cli/                     `ceviri` komut satırı aracı: `ps5ceviri` ile aynı komutlar
 │   └── winprobe/                Windows'ta Remote Play yakalama + OCR test aracı (Faz 0)
@@ -430,7 +432,18 @@ Tüm Mac seçenekleri için: [mac/README.md](mac/README.md).
 `desktop/` iki işletim sistemi için yazılır: CI (`.github/workflows/desktop.yml`) her değişiklikte
 Rust kodunu macOS **ve** Windows'ta derleyip test eder. Mac'te ekran okuma, gerçek oyunda doğrulanmış
 Swift kodudur ve Rust'tan köprüyle çağrılır; Rust tarafı ana thread'i olay döngüsüne bırakıp okumayı
-ayrı bir thread'de yapar. Rust aracı Swift aracıyla aynı komutları sunar (Remote Play açıkken):
+ayrı bir thread'de yapar.
+
+Masaüstü uygulamasını çalıştırmak için (Remote Play açıkken):
+
+```bash
+cd desktop && cargo run --release -p ceviri-app
+```
+
+Arayüzü uygulamayı açmadan görmek için `desktop/app/dev/preview.html` tarayıcıda açılabilir (sahte
+verilerle; `?calisiyor` ve `?ayarlar` parametreleri farklı durumları gösterir).
+
+Rust komut satırı aracı Swift aracıyla aynı komutları sunar:
 
 ```bash
 cd desktop && cargo run --release -p ceviri-cli -- run --dry-run

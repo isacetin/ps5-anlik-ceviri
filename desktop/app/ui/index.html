@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Anlık Çeviri</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="top">
+    <div class="brand">
+      <img src="icon.png" alt="" width="28" height="28">
+      <h1>Anlık Çeviri</h1>
+    </div>
+    <span id="state-pill" class="pill" data-state="stopped">Durduruldu</span>
+  </header>
+
+  <main>
+    <section class="card hero">
+      <button id="toggle" class="primary" type="button">Başlat</button>
+      <p id="state-detail" class="detail">PS Remote Play'i açıp PS5'e bağlandıktan sonra başlatın.</p>
+    </section>
+
+    <section class="card">
+      <h2>Durum</h2>
+      <ul class="rows">
+        <li>
+          <span class="dot" id="tv-dot" data-level="idle"></span>
+          <span class="label">TV</span>
+          <span class="value" id="tv-value">Bağlı değil</span>
+        </li>
+        <li>
+          <span class="dot" id="window-dot" data-level="idle"></span>
+          <span class="label">Remote Play</span>
+          <span class="value" id="window-value">—</span>
+        </li>
+        <li>
+          <span class="dot" id="mode-dot" data-level="idle"></span>
+          <span class="label">Çeviri</span>
+          <span class="value" id="mode-value">—</span>
+        </li>
+      </ul>
+      <p class="stats" id="stats" hidden></p>
+    </section>
+
+    <section class="card">
+      <h2>Ekranda</h2>
+      <ul id="shown" class="shown">
+        <li class="empty">Henüz bir şey gösterilmedi.</li>
+      </ul>
+    </section>
+
+    <section class="card">
+      <details id="settings-panel">
+        <summary><h2>Ayarlar</h2></summary>
+        <form id="settings" class="form">
+          <label class="field">
+            <span>TV adresi</span>
+            <input id="tv-address" type="text" placeholder="Boş bırakın: otomatik bul" autocomplete="off" spellcheck="false">
+          </label>
+          <fieldset class="field">
+            <legend>Mod</legend>
+            <label class="choice"><input type="radio" name="mode" value="translate"> Türkçe çeviri (DeepL)</label>
+            <label class="choice"><input type="radio" name="mode" value="test"> Çevirisiz test: İngilizce metni yerinde gösterir, kota harcamaz</label>
+          </fieldset>
+          <label class="field">
+            <span>Hız</span>
+            <select id="fps">
+              <option value="1">Saniyede 1 kez</option>
+              <option value="2">Saniyede 2 kez (önerilen)</option>
+              <option value="3">Saniyede 3 kez</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>Pencere</span>
+            <input id="window" type="text" placeholder="Boş bırakın: PS Remote Play" autocomplete="off" spellcheck="false">
+          </label>
+          <div class="actions">
+            <button type="submit" class="secondary">Kaydet</button>
+            <span id="settings-note" class="note" role="status"></span>
+          </div>
+        </form>
+      </details>
+    </section>
+
+    <section class="card">
+      <details id="deepl-panel">
+        <summary><h2>DeepL anahtarı</h2><span id="key-badge" class="badge">—</span></summary>
+        <form id="deepl" class="form">
+          <p class="help">deepl.com'dan ücretsiz <strong>DeepL API Free</strong> hesabı açın; anahtar <code>:fx</code> ile biter. Anahtar yalnızca bu bilgisayarda saklanır.</p>
+          <label class="field">
+            <span>Anahtar</span>
+            <input id="deepl-key" type="password" autocomplete="off" spellcheck="false" placeholder="xxxxxxxx-xxxx-…:fx">
+          </label>
+          <div class="actions">
+            <button type="submit" class="secondary">Kaydet ve dene</button>
+            <span id="deepl-note" class="note" role="status"></span>
+          </div>
+        </form>
+      </details>
+    </section>
+
+    <p id="error" class="error" role="alert" hidden></p>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>

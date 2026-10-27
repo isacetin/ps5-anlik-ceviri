@@ -1,0 +1,23 @@
+[package]
+name = "ceviri-app"
+description = "Masaüstü uygulaması (Tauri): Mac + Windows"
+edition.workspace = true
+version.workspace = true
+
+[[bin]]
+name = "anlik-ceviri"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+ceviri-core.workspace = true
+ceviri-engine.workspace = true
+ceviri-platform.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tauri = { version = "2", features = [] }
+
+[dev-dependencies]
+tungstenite = "0.30"

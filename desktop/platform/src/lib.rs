@@ -1,4 +1,6 @@
-//! İşletim sistemine göre platform katmanı. Ana döngü yalnızca `ScreenReader`'ı görür.
+//! İşletim sistemine göre platform katmanı seçimi: Mac'te `ceviri-mac` (Swift köprüsü), Windows'ta
+//! `ceviri-windows`. Komut satırı aracı ve masaüstü uygulaması bunu kullanır; iş hattı yalnızca
+//! `ScreenReader`'ı görür.
 
 use ceviri_core::ScreenReader;
 
@@ -9,7 +11,14 @@ pub struct Window {
     pub height: u32,
 }
 
-/// `job`'ı worker thread'de çalıştırır, bitince süreç onun sonucuyla çıkar. Mac'te ana thread
+/// Süreç başında, ana thread'den çağrılır. Windows'ta koordinatların ölçeklenmeden fiziksel
+/// piksel gelmesini sağlar (yakalanan kareyle aynı birim). GUI çatısı bunu zaten yaptıysa zararsız.
+pub fn prepare_process() {
+    #[cfg(windows)]
+    ceviri_windows::win::enable_dpi_awareness();
+}
+
+/// Komut satırı için: `job`'ı worker thread'de çalıştırır, bitince süreç onun sonucuyla çıkar. Mac'te ana thread
 /// bu sırada olay döngüsünü çalıştırır (ScreenCaptureKit ve Swift ana aktörü buna ihtiyaç duyar).
 pub fn run(job: impl FnOnce() -> Result<(), String> + Send + 'static) -> ! {
     let finish = |result: Result<(), String>| -> ! {
@@ -31,9 +40,7 @@ pub fn run(job: impl FnOnce() -> Result<(), String> + Send + 'static) -> ! {
     }
     #[cfg(not(target_os = "macos"))]
     {
-        // Koordinatlar ölçeklenmeden fiziksel piksel olarak gelsin (yakalanan kareyle aynı birim).
-        #[cfg(windows)]
-        ceviri_windows::win::enable_dpi_awareness();
+        prepare_process();
         finish(job())
     }
 }

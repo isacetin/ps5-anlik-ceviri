@@ -9,3 +9,4 @@ local.properties
 __pycache__/
 desktop/target/
 desktop/winprobe/dist/
+desktop/app/gen/
