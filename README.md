@@ -424,6 +424,7 @@ Tüm Mac seçenekleri için: [mac/README.md](mac/README.md).
 │   ├── engine/                  Çalışan iş hattı: TV istemcisi, mDNS ile TV bulma, DeepL, ana döngü
 │   ├── mac/                     Mac platform katmanı: CeviriBridge'i derleyip bağlar (build.rs)
 │   ├── platform/                İşletim sistemine göre okuyucu seçimi (uygulama ve CLI ortak kullanır)
+│   ├── tvsetup/                 TV uygulamasını ağ üzerinden kurar/kaldırır (adb protokolü, ek araç gerekmez)
 │   ├── windows/                 Windows platform katmanı: Windows.Graphics.Capture + Windows.Media.Ocr
 │   ├── cli/                     `ceviri` komut satırı aracı: `ps5ceviri` ile aynı komutlar
 │   └── winprobe/                Windows'ta Remote Play yakalama + OCR test aracı (Faz 0)
@@ -440,6 +441,18 @@ Masaüstü uygulamasını çalıştırmak için (Remote Play açıkken):
 ```bash
 cd desktop && cargo run --release -p ceviri-app
 ```
+
+İlk açılışta bir **kurulum sihirbazı** her şeyi adım adım yaptırır: çevirilerin nerede gösterileceği,
+Mac'te ekranı okuma izni, PS Remote Play, TV uygulamasının kurulumu, kontrolcü ve DeepL anahtarı.
+TV uygulamasını sihirbaz **kendisi kurar**: kullanıcı TV'de yalnızca geliştirici seçeneklerinden
+"Ağ üzerinden hata ayıklama"yı açar ve TV'nin sorduğu izni onaylar; uygulama TV'yi ağda bulur, APK'yı
+yükler, görüntünün üstünde gösterme iznini verir ve TV'de bir test yazısı gösterir. Masaüstü uygulaması
+derlenmeden önce TV APK'sı derlenmiş olmalıdır (`./gradlew assembleRelease`); uygulamaya gömülür.
+
+TV uygulaması sıradan bir uygulamadır (cihaz yöneticisi ya da sistem uygulaması değildir): TV'nin
+**Ayarlar → Uygulamalar** menüsünden ya da masaüstü uygulamasının Ayarlar'ındaki **"TV uygulamasını
+kaldır"** düğmesiyle istenildiği zaman kaldırılır. Kurulumdan sonra "Ağ üzerinden hata ayıklama"
+kapatılabilir; TV uygulaması çalışmaya devam eder (yalnızca güncelleme için yeniden açmak gerekir).
 
 Ayarlardaki **"Çevirileri nerede göster?"** seçeneğiyle çeviri TV'de, bu bilgisayarın ekranında
 (oyun penceresinin üstünde, şeffaf ve tıklamayı geçiren bir katman) ya da ikisinde gösterilir. Ekran

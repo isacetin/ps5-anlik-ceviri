@@ -47,11 +47,13 @@ pub struct Settings {
     pub window: String,
     /// Çevrilmeyecek adlar (oyun, karakter); PlayStation, PS5 vb. her zaman korunur.
     pub protected_terms: Vec<String>,
+    /// İlk kurulum sihirbazı tamamlandı mı (değilse uygulama açılınca sihirbaz gösterilir).
+    pub setup_done: bool,
 }
 
 impl Default for Settings {
     fn default() -> Settings {
-        Settings { output: Output::Tv, tv_address: String::new(), translate: true, fps: 2.0, window: String::new(), protected_terms: Vec::new() }
+        Settings { output: Output::Tv, tv_address: String::new(), translate: true, fps: 2.0, window: String::new(), protected_terms: Vec::new(), setup_done: false }
     }
 }
 

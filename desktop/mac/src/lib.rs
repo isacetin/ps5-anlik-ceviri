@@ -29,6 +29,23 @@ extern "C" {
     fn ceviri_reader_dump(handle: *mut c_void, path: *const c_char, boxes_json: *const c_char) -> *mut c_char;
 }
 
+#[link(name = "CoreGraphics", kind = "framework")]
+extern "C" {
+    fn CGPreflightScreenCaptureAccess() -> bool;
+    fn CGRequestScreenCaptureAccess() -> bool;
+}
+
+/// Ekran Kaydı izni verilmiş mi? (Soru göstermez.)
+pub fn screen_recording_granted() -> bool {
+    unsafe { CGPreflightScreenCaptureAccess() }
+}
+
+/// İzin henüz sorulmadıysa sistem sorusunu gösterir; verilmişse `true`. Bir kez reddedildiyse
+/// macOS tekrar sormaz, kullanıcı Sistem Ayarları'ndan açmalıdır.
+pub fn request_screen_recording() -> bool {
+    unsafe { CGRequestScreenCaptureAccess() }
+}
+
 /// Ana thread'den, başka her şeyden önce çağrılır (pencere sunucusu bağlantısını açar).
 pub fn prepare() {
     unsafe { ceviri_prepare() }

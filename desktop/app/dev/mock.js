@@ -6,6 +6,18 @@ window.__TAURI__ = {
   core: {
     invoke: async (cmd) => {
       if (cmd === "status") return status;
+      if (cmd === "setup_status") return { platform: "macos", screenRecording: true, remotePlay: true, tvApkAvailable: true, hasDeeplKey: true, setupDone: status.settings.setupDone };
+      if (cmd === "tv_scan") return new Promise((r) => setTimeout(() => r([{ ip: "192.168.1.5", appRunning: false }]), 200));
+      if (cmd === "tv_install") {
+        const labels = [
+          "TV'ye bağlanılıyor… TV'de izin sorusu çıkarsa \"Her zaman izin ver\"i işaretleyip Tamam'a basın.",
+          "TV'deki sürüm kontrol ediliyor…",
+          "TV uygulaması yükleniyor (yaklaşık 20 saniye)…",
+        ];
+        labels.forEach((label, i) => setTimeout(() => handlers.forEach((h) => h({ payload: { label } })), 100 * (i + 1)));
+        return new Promise((r) => setTimeout(r, new URLSearchParams(location.search).has("kuruluyor") ? 1e9 : 500));
+      }
+      if (cmd === "tv_test") return new Promise((r) => setTimeout(r, 300));
       if (cmd === "start") {
         status.running = true;
         const emit = (payload, ms) => setTimeout(() => handlers.forEach((h) => h({ payload })), ms);
@@ -23,6 +35,18 @@ window.__TAURI__ = {
 // preview.html?calisiyor: sayfa açılınca "Başlat"a basılmış hali gösterilir.
 if (new URLSearchParams(location.search).has("calisiyor")) {
   addEventListener("load", () => setTimeout(() => document.getElementById("toggle").click(), 50));
+}
+
+// preview.html?sihirbaz&tikla=N: kurulum sihirbazı, "ileri" düğmesine N kez basılmış hali.
+const query = new URLSearchParams(location.search);
+status.settings.setupDone = !query.has("sihirbaz");
+if (query.has("tikla")) {
+  addEventListener("load", async () => {
+    for (let i = 0; i < Number(query.get("tikla")); i++) {
+      await new Promise((r) => setTimeout(r, 900));
+      document.querySelector("#wizard-body .wizard-actions .primary")?.click();
+    }
+  });
 }
 
 // preview.html?ayarlar: Ayarlar ve DeepL panelleri açık gösterilir.

@@ -1,0 +1,9 @@
+[package]
+name = "ceviri-tvsetup"
+description = "TV uygulamasını masaüstünden ağ üzerinden kurar: TV bulma, APK yükleme, izin, başlatma (adb protokolü)"
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+adb_client = { version = "3", default-features = false }
+rsa = "0.9"

@@ -15,6 +15,7 @@ tauri-build = { version = "2", features = [] }
 ceviri-core.workspace = true
 ceviri-engine.workspace = true
 ceviri-platform.workspace = true
+ceviri-tvsetup.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 # macos-private-api: şeffaf overlay penceresi için (yalnızca Mac App Store dağıtımını engeller).

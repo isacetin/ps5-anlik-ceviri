@@ -6,6 +6,8 @@ const $ = (id) => document.getElementById(id);
 let running = false;
 let busy = false;
 let currentOutput = "tv";
+// Sunucudaki ayarların tamamı; form yalnızca bir kısmını düzenler (ör. setupDone formda yok).
+let savedSettings = null;
 
 function setLevel(dot, level) {
   $(dot).dataset.level = level;
@@ -59,6 +61,7 @@ function renderShown(texts) {
 const usesTv = (output) => output === "tv" || output === "both";
 
 function renderSettings(settings) {
+  savedSettings = settings;
   currentOutput = settings.output;
   for (const radio of document.querySelectorAll('input[name="output"]')) {
     radio.checked = radio.value === settings.output;
@@ -78,6 +81,7 @@ function renderSettings(settings) {
 
 function readSettings() {
   return {
+    ...savedSettings,
     output: document.querySelector('input[name="output"]:checked')?.value ?? "tv",
     tvAddress: $("tv-address").value.trim(),
     translate: document.querySelector('input[name="mode"]:checked')?.value !== "test",
@@ -98,7 +102,49 @@ async function refresh() {
   renderSettings(status.settings);
   renderKey(status.hasDeeplKey);
   setState(status.running ? "running" : "stopped");
+  return status;
 }
+
+async function start() {
+  const status = await refresh();
+  // İlk açılış: kurulum sihirbazı.
+  if (!status.settings.setupDone && !status.running) window.Wizard.open(status.settings, refresh);
+}
+
+$("open-wizard").addEventListener("click", () => window.Wizard.open(savedSettings, refresh));
+
+// Kaldırma iki adımlı: ilk tıklama onay ister.
+let uninstallArmed = false;
+$("tv-uninstall").addEventListener("click", async () => {
+  const note = $("maintenance-note");
+  const ip = savedSettings.tvAddress;
+  if (!ip) {
+    note.className = "note bad";
+    note.textContent = "Kayıtlı bir TV adresi yok. TV uygulamasını TV'nin Ayarlar → Uygulamalar menüsünden kaldırabilirsiniz.";
+    return;
+  }
+  if (!uninstallArmed) {
+    uninstallArmed = true;
+    $("tv-uninstall").textContent = `Emin misiniz? ${ip} üzerinden kaldır`;
+    setTimeout(() => {
+      uninstallArmed = false;
+      $("tv-uninstall").textContent = "TV uygulamasını kaldır";
+    }, 5000);
+    return;
+  }
+  uninstallArmed = false;
+  $("tv-uninstall").textContent = "TV uygulamasını kaldır";
+  note.className = "note";
+  note.textContent = "Kaldırılıyor…";
+  try {
+    await invoke("tv_uninstall", { ip });
+    note.className = "note ok";
+    note.textContent = "TV uygulaması kaldırıldı.";
+  } catch (error) {
+    note.className = "note bad";
+    note.textContent = String(error);
+  }
+});
 
 function onEvent({ payload: event }) {
   switch (event.type) {
@@ -188,4 +234,4 @@ $("deepl").addEventListener("submit", async (event) => {
 });
 
 listen("ceviri", onEvent);
-refresh().catch((error) => showError(String(error)));
+start().catch((error) => showError(String(error)));

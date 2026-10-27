@@ -11,6 +11,65 @@ pub struct Window {
     pub height: u32,
 }
 
+/// Ekran Kaydı izni: Mac'te `Some(verildi mi)`, Windows'ta böyle bir izin yok (`None`).
+pub fn screen_recording_granted() -> Option<bool> {
+    #[cfg(target_os = "macos")]
+    return Some(ceviri_mac::screen_recording_granted());
+    #[cfg(not(target_os = "macos"))]
+    None
+}
+
+/// Mac'te izin sorusunu gösterir (yalnızca ilk seferde); sonuç `screen_recording_granted` gibi.
+pub fn request_screen_recording() -> Option<bool> {
+    #[cfg(target_os = "macos")]
+    return Some(ceviri_mac::request_screen_recording());
+    #[cfg(not(target_os = "macos"))]
+    None
+}
+
+/// Gizlilik ayarları sayfasını açar: "screen" (Ekran Kaydı) ya da "network" (Yerel Ağ). Yalnızca Mac.
+pub fn open_privacy_settings(page: &str) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        let anchor = match page {
+            "screen" => "Privacy_ScreenCapture",
+            "network" => "Privacy_LocalNetwork",
+            other => return Err(format!("bilinmeyen ayar sayfası: {other}")),
+        };
+        std::process::Command::new("open")
+            .arg(format!("x-apple.systempreferences:com.apple.preference.security?{anchor}"))
+            .status()
+            .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = page;
+        Err("Bu işletim sisteminde gizlilik izni gerekmiyor".into())
+    }
+}
+
+/// PS Remote Play penceresi ekranda mı?
+pub fn remote_play_open() -> Result<bool, String> {
+    #[cfg(target_os = "macos")]
+    return Ok(ceviri_mac::list_windows()?.iter().any(|w| w.bundle_id == ceviri_mac::REMOTE_PLAY_BUNDLE_ID));
+    #[cfg(windows)]
+    return Ok(ceviri_windows::win::visible_windows().iter().any(|w| w.looks_like_remote_play()));
+    #[cfg(not(any(target_os = "macos", windows)))]
+    Err("desteklenmeyen işletim sistemi".into())
+}
+
+/// Varsayılan tarayıcıda açar.
+pub fn open_url(url: &str) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    let status = std::process::Command::new("open").arg(url).status();
+    #[cfg(windows)]
+    let status = std::process::Command::new("rundll32").args(["url.dll,FileProtocolHandler", url]).status();
+    #[cfg(not(any(target_os = "macos", windows)))]
+    let status = std::process::Command::new("xdg-open").arg(url).status();
+    status.map(|_| ()).map_err(|e| e.to_string())
+}
+
 /// Süreç başında, ana thread'den çağrılır. Windows'ta koordinatların ölçeklenmeden fiziksel
 /// piksel gelmesini sağlar (yakalanan kareyle aynı birim). GUI çatısı bunu zaten yaptıysa zararsız.
 pub fn prepare_process() {

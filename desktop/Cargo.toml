@@ -1,7 +1,7 @@
 # Masaüstü tarafı (Mac + Windows). `core` platformdan bağımsızdır ve her iki işletim sisteminde
 # CI'da test edilir; platforma özel yakalama/OCR kodu ayrı crate'lerde durur.
 [workspace]
-members = ["app", "cli", "core", "engine", "mac", "platform", "windows", "winprobe"]
+members = ["app", "cli", "core", "engine", "mac", "platform", "tvsetup", "windows", "winprobe"]
 resolver = "2"
 
 [workspace.package]
@@ -13,6 +13,7 @@ ceviri-core = { path = "core" }
 ceviri-engine = { path = "engine" }
 ceviri-mac = { path = "mac" }
 ceviri-platform = { path = "platform" }
+ceviri-tvsetup = { path = "tvsetup" }
 ceviri-windows = { path = "windows" }
 image = { version = "0.25", default-features = false, features = ["png"] }
 serde = { version = "1", features = ["derive"] }
@@ -20,3 +21,10 @@ serde_json = "1"
 
 [profile.release]
 strip = true
+
+# RSA anahtarı üretimi (TV kurulumu) debug derlemede çok yavaş; bu iki kütüphane hep optimize edilir.
+[profile.dev.package.num-bigint-dig]
+opt-level = 3
+
+[profile.dev.package.rsa]
+opt-level = 3

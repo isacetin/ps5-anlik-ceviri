@@ -15,7 +15,12 @@
     <span id="state-pill" class="pill" data-state="stopped">Durduruldu</span>
   </header>
 
-  <main>
+  <section id="wizard" class="wizard" hidden>
+    <div id="wizard-progress" class="wizard-progress"></div>
+    <div id="wizard-body" class="card wizard-card"></div>
+  </section>
+
+  <main id="app-main">
     <section class="card hero">
       <button id="toggle" class="primary" type="button">Başlat</button>
       <p id="state-detail" class="detail">PS Remote Play'i açıp PS5'e bağlandıktan sonra başlatın.</p>
@@ -90,6 +95,11 @@
             <button type="submit" class="secondary">Kaydet</button>
             <span id="settings-note" class="note" role="status"></span>
           </div>
+          <div class="maintenance">
+            <button type="button" id="open-wizard" class="ghost">Kurulum sihirbazını aç</button>
+            <button type="button" id="tv-uninstall" class="ghost danger">TV uygulamasını kaldır</button>
+          </div>
+          <p id="maintenance-note" class="note" role="status"></p>
         </form>
       </details>
     </section>
@@ -114,6 +124,7 @@
     <p id="error" class="error" role="alert" hidden></p>
   </main>
 
+  <script src="wizard.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

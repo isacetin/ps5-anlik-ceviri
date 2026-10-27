@@ -39,6 +39,7 @@ import androidx.tv.material3.Surface
 import androidx.tv.material3.SurfaceDefaults
 import androidx.tv.material3.Text
 import androidx.tv.material3.darkColorScheme
+import com.isacetin.ps5ceviri.overlay.OverlayService
 
 class MainActivity : ComponentActivity() {
 
@@ -46,6 +47,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        handleSetupIntent(intent)
         setContent {
             MaterialTheme(colorScheme = darkColorScheme()) {
                 val state by viewModel.uiState.collectAsStateWithLifecycle()
@@ -61,9 +63,30 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        handleSetupIntent(intent)
+    }
+
     override fun onResume() {
         super.onResume()
         viewModel.refresh()
+    }
+
+    /**
+     * Masaüstü uygulamasının kurulum sihirbazı, kurulumdan sonra uygulamayı
+     * `am start -n <paket>/.ui.MainActivity --ez start_overlay true` ile açar: overlay kullanıcı
+     * TV'de düğmeye basmadan başlar (servis dışarıya kapalı kalır; başlatan bu ekrandır).
+     */
+    private fun handleSetupIntent(intent: Intent?) {
+        if (intent?.getBooleanExtra(EXTRA_START_OVERLAY, false) == true) {
+            OverlayService.start(this)
+            intent.removeExtra(EXTRA_START_OVERLAY)
+        }
+    }
+
+    companion object {
+        const val EXTRA_START_OVERLAY = "start_overlay"
     }
 
     /** Birçok Android TV'de bu ekran yoktur; açılamazsa çökmek yerine adb komutuna yönlendiririz. */

@@ -9,6 +9,7 @@
 
 mod controller;
 mod overlay;
+mod setup;
 
 use std::sync::Arc;
 
@@ -100,7 +101,22 @@ fn main() {
                 window.app_handle().exit(0);
             }
         })
-        .invoke_handler(tauri::generate_handler![status, save_settings, start, stop, save_deepl_key])
+        .invoke_handler(tauri::generate_handler![
+            status,
+            save_settings,
+            start,
+            stop,
+            save_deepl_key,
+            setup::setup_status,
+            setup::request_screen_recording,
+            setup::open_privacy_settings,
+            setup::open_link,
+            setup::tv_scan,
+            setup::tv_install,
+            setup::tv_test,
+            setup::tv_uninstall,
+            setup::finish_setup,
+        ])
         .run(tauri::generate_context!())
         .expect("uygulama başlatılamadı");
 }
