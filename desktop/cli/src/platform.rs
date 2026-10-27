@@ -1,19 +1,12 @@
-//! İşletim sistemine göre platform katmanı. Ana döngü yalnızca `PlatformReader`'ı görür.
+//! İşletim sistemine göre platform katmanı. Ana döngü yalnızca `ScreenReader`'ı görür.
 
-use std::path::Path;
-
-use ceviri_core::{Rect, ScreenReader};
+use ceviri_core::ScreenReader;
 
 pub struct Window {
     pub app: String,
     pub title: String,
     pub width: u32,
     pub height: u32,
-}
-
-/// Okuyucu + debug çıktısı (kutular çizilmiş kare).
-pub trait PlatformReader: ScreenReader {
-    fn dump(&self, path: &Path, boxes: &[Rect]) -> Result<(), String>;
 }
 
 /// `job`'ı worker thread'de çalıştırır, bitince süreç onun sonucuyla çıkar. Mac'te ana thread
@@ -45,13 +38,7 @@ mod imp {
     use super::*;
     use ceviri_mac::{MacScreenReader, REMOTE_PLAY_BUNDLE_ID};
 
-    impl PlatformReader for MacScreenReader {
-        fn dump(&self, path: &Path, boxes: &[Rect]) -> Result<(), String> {
-            MacScreenReader::dump(self, path, boxes)
-        }
-    }
-
-    pub fn screen_reader(app: Option<&str>, fps: f64, title_bar: Option<f64>) -> Result<Box<dyn PlatformReader>, String> {
+    pub fn screen_reader(app: Option<&str>, fps: f64, title_bar: Option<f64>) -> Result<Box<dyn ScreenReader>, String> {
         Ok(Box::new(MacScreenReader::new(app.unwrap_or(REMOTE_PLAY_BUNDLE_ID), fps, title_bar)?))
     }
 
@@ -71,7 +58,7 @@ mod imp {
     // ayrı bir crate'e taşınınca buraya bağlanacak.
     const NOT_YET: &str = "Bu işletim sistemi için ekran okuma henüz bağlanmadı";
 
-    pub fn screen_reader(_app: Option<&str>, _fps: f64, _title_bar: Option<f64>) -> Result<Box<dyn PlatformReader>, String> {
+    pub fn screen_reader(_app: Option<&str>, _fps: f64, _title_bar: Option<f64>) -> Result<Box<dyn ScreenReader>, String> {
         Err(NOT_YET.into())
     }
 

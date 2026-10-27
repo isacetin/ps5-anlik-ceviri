@@ -2,8 +2,10 @@
 //! Windows (Windows.Graphics.Capture + Windows.Media.Ocr) bunu uygular; ana döngü yalnızca bunu görür.
 
 use std::fmt;
+use std::path::Path;
 
 use crate::block_merger::TextLine;
+use crate::geometry::Rect;
 
 /// Bir tur ekran okumanın sonucu.
 #[derive(Clone, Debug, PartialEq)]
@@ -42,4 +44,9 @@ impl std::error::Error for ReadError {}
 pub trait ScreenReader: Send {
     /// Pencereyi bulur, en son karenin video alanını okur. Sonuç gelene kadar bloklar.
     fn read(&mut self) -> Result<Reading, ReadError>;
+
+    /// Debug: son okunan video karesini kutularla (normalize, origin sol üst) PNG olarak yazar.
+    fn dump(&self, _path: &Path, _boxes: &[Rect]) -> Result<(), String> {
+        Err("bu platformda kare kaydı desteklenmiyor".into())
+    }
 }

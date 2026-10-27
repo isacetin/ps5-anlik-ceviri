@@ -419,8 +419,9 @@ Tüm Mac seçenekleri için: [mac/README.md](mac/README.md).
 │   └── Sources/ps5ceviri/       DeepL, WebSocket, TV bulma, komut satırı
 ├── desktop/                     Mac + Windows masaüstü uygulaması (Rust workspace, geliştiriliyor)
 │   ├── core/                    Platformdan bağımsız mantık: PS5CeviriCore'un Rust karşılığı
+│   ├── engine/                  Çalışan iş hattı: TV istemcisi, mDNS ile TV bulma, DeepL, ana döngü
 │   ├── mac/                     Mac platform katmanı: CeviriBridge'i derleyip bağlar (build.rs)
-│   ├── cli/                     `ceviri` komut satırı aracı: iş hattını platform katmanıyla dener
+│   ├── cli/                     `ceviri` komut satırı aracı: `ps5ceviri` ile aynı komutlar
 │   └── winprobe/                Windows'ta Remote Play yakalama + OCR test aracı (Faz 0)
 └── tools/ws_test.py             Mac olmadan TV'ye sahte mesaj gönderen test scripti
 ```
@@ -428,10 +429,20 @@ Tüm Mac seçenekleri için: [mac/README.md](mac/README.md).
 `desktop/` iki işletim sistemi için yazılır: CI (`.github/workflows/desktop.yml`) her değişiklikte
 Rust kodunu macOS **ve** Windows'ta derleyip test eder. Mac'te ekran okuma, gerçek oyunda doğrulanmış
 Swift kodudur ve Rust'tan köprüyle çağrılır; Rust tarafı ana thread'i olay döngüsüne bırakıp okumayı
-ayrı bir thread'de yapar. Denemek için (Remote Play açıkken):
+ayrı bir thread'de yapar. Rust aracı Swift aracıyla aynı komutları sunar (Remote Play açıkken):
 
 ```bash
-cd desktop && cargo run -p ceviri-cli -- read --count 5
+cd desktop && cargo run --release -p ceviri-cli -- run --dry-run
+```
+
+TV olmadan denemek için sahte TV (gelen mesajları yazar, gerçek TV gibi ping atar):
+
+```bash
+cd desktop && cargo run -p ceviri-engine --example fake_tv -- 18765
+```
+
+```bash
+cd desktop && cargo run -p ceviri-cli -- run --dry-run --tv 127.0.0.1:18765
 ```
 
 **Unit testler:**

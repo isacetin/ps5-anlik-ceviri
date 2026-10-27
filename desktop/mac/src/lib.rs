@@ -81,9 +81,15 @@ impl MacScreenReader {
             .map(|handle| MacScreenReader { handle })
             .ok_or_else(|| "okuyucu oluşturulamadı (ana thread'den mi çağrıldı?)".into())
     }
+}
 
-    /// Son okunan video karesini kutularla (normalize, origin sol üst) PNG olarak yazar.
-    pub fn dump(&self, path: &Path, boxes: &[Rect]) -> Result<(), String> {
+impl ScreenReader for MacScreenReader {
+    fn read(&mut self) -> Result<Reading, ReadError> {
+        let json = take(unsafe { ceviri_reader_read(self.handle.as_ptr()) }).ok_or(ReadError::Other("köprü yanıt vermedi".into()))?;
+        parse_reading(&json)
+    }
+
+    fn dump(&self, path: &Path, boxes: &[Rect]) -> Result<(), String> {
         #[derive(Serialize)]
         struct BoxJson {
             x: f64,
@@ -98,13 +104,6 @@ impl MacScreenReader {
             None => Ok(()),
             Some(error) => Err(error),
         }
-    }
-}
-
-impl ScreenReader for MacScreenReader {
-    fn read(&mut self) -> Result<Reading, ReadError> {
-        let json = take(unsafe { ceviri_reader_read(self.handle.as_ptr()) }).ok_or(ReadError::Other("köprü yanıt vermedi".into()))?;
-        parse_reading(&json)
     }
 }
 

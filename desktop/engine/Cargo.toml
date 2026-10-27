@@ -1,0 +1,14 @@
+[package]
+name = "ceviri-engine"
+description = "Çalışan iş hattı: TV istemcisi, TV bulma (mDNS), DeepL istemcisi, ana döngü (Mac + Windows)"
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+ceviri-core.workspace = true
+mdns-sd = "0.21"
+tungstenite = "0.30"
+ureq = "3"
+
+[dev-dependencies]
+serde_json.workspace = true
