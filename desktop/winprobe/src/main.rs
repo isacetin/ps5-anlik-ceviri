@@ -2,13 +2,6 @@
 //! Windows'un yerleşik OCR'ı oyun yazılarını ne kadar iyi okuyor, bunu ölçer.
 //! Çıktılar (kareler, OCR kutuları çizilmiş görüntüler, rapor.txt) bir klasöre yazılır.
 
-#[cfg(windows)]
-mod capture;
-#[cfg(windows)]
-mod ocr;
-#[cfg(windows)]
-mod win;
-
 #[cfg(not(windows))]
 fn main() {
     eprintln!("winprobe yalnızca Windows'ta çalışır.");
@@ -29,14 +22,13 @@ mod app {
     use std::time::{Duration, Instant};
 
     use ceviri_core::geometry::video_rect;
-    use ceviri_core::{FrameStats, Rect, TextLine};
-    use image::{imageops, Rgba, RgbaImage};
+    use ceviri_core::{FrameStats, TextLine};
+    use ceviri_windows::capture::{self, WindowCapture};
+    use ceviri_windows::imaging::{crop, draw_boxes, prepare_for_ocr};
+    use ceviri_windows::ocr::{self, OcrSetup};
+    use ceviri_windows::win::{self, WindowInfo};
+    use image::RgbaImage;
     use windows::Media::Ocr::OcrEngine;
-    use windows::Win32::System::WinRT::{RoInitialize, RO_INIT_MULTITHREADED};
-
-    use crate::capture::{self, WindowCapture};
-    use crate::ocr::{self, OcrSetup};
-    use crate::win::{self, WindowInfo};
 
     const USAGE: &str = "\
 Kullanım:
@@ -77,9 +69,7 @@ Kullanım:
 
     pub fn main() {
         win::enable_dpi_awareness();
-        unsafe {
-            let _ = RoInitialize(RO_INIT_MULTITHREADED);
-        }
+        ceviri_windows::ensure_mta();
         let args: Vec<String> = std::env::args().skip(1).collect();
         let result = match args.first().map(String::as_str) {
             None => full_test(&args, true),
@@ -309,7 +299,8 @@ Kullanım:
                 let _ = write!(line, "  OCR {:.0} ms ({}x{}), {} satır", run.ms, run.size.0, run.size.1, run.lines.len());
                 say!("{line}");
                 print_lines(&run.lines);
-                save_png(&draw_boxes(&video_image, &run.lines), &out_dir.join(format!("t{round}_ocr_{index:02}.png")))?;
+                let boxes: Vec<_> = run.lines.iter().map(|l| l.bbox).collect();
+                save_png(&draw_boxes(&video_image, &boxes), &out_dir.join(format!("t{round}_ocr_{index:02}.png")))?;
             } else {
                 say!("{line}");
             }
@@ -353,19 +344,7 @@ Kullanım:
 
     /// Video alanını OCR'a hazırlar (ölçek + azami boyut) ve tanır. Kutular video alanına göre normalize.
     fn run_ocr(engine: &OcrEngine, video: &RgbaImage, scale: f64, max_dimension: u32) -> Result<OcrRun, String> {
-        let (w, h) = video.dimensions();
-        let mut factor = scale;
-        let longest = w.max(h) as f64 * factor;
-        if longest > max_dimension as f64 {
-            factor *= max_dimension as f64 / longest;
-        }
-        let prepared = if (factor - 1.0).abs() > 1e-3 {
-            let nw = ((w as f64 * factor).round() as u32).max(1);
-            let nh = ((h as f64 * factor).round() as u32).max(1);
-            imageops::resize(video, nw, nh, imageops::FilterType::CatmullRom)
-        } else {
-            video.clone()
-        };
+        let prepared = prepare_for_ocr(video, scale, max_dimension);
         let started = Instant::now();
         let lines = ocr::recognize(engine, &prepared).map_err(|e| format!("OCR hatası: {e}"))?;
         Ok(OcrRun { lines, ms: started.elapsed().as_secs_f64() * 1000.0, size: prepared.dimensions() })
@@ -398,44 +377,6 @@ Kullanım:
             print_lines(&run.lines);
         }
         Ok(())
-    }
-
-    fn crop(image: &RgbaImage, rect: Rect) -> RgbaImage {
-        let x = rect.x.round().max(0.0) as u32;
-        let y = rect.y.round().max(0.0) as u32;
-        let w = (rect.width.round() as u32).min(image.width().saturating_sub(x)).max(1);
-        let h = (rect.height.round() as u32).min(image.height().saturating_sub(y)).max(1);
-        imageops::crop_imm(image, x, y, w, h).to_image()
-    }
-
-    /// Debug için: OCR kutularını kırmızı çerçeve olarak çizer.
-    fn draw_boxes(image: &RgbaImage, lines: &[TextLine]) -> RgbaImage {
-        let mut out = image.clone();
-        let (w, h) = (out.width() as f64, out.height() as f64);
-        let red = Rgba([255, 40, 40, 255]);
-        for line in lines {
-            let x0 = (line.bbox.x * w) as i64;
-            let y0 = (line.bbox.y * h) as i64;
-            let x1 = ((line.bbox.x + line.bbox.width) * w) as i64;
-            let y1 = ((line.bbox.y + line.bbox.height) * h) as i64;
-            for t in 0..2 {
-                for x in x0..=x1 {
-                    put(&mut out, x, y0 - t, red);
-                    put(&mut out, x, y1 + t, red);
-                }
-                for y in y0..=y1 {
-                    put(&mut out, x0 - t, y, red);
-                    put(&mut out, x1 + t, y, red);
-                }
-            }
-        }
-        out
-    }
-
-    fn put(image: &mut RgbaImage, x: i64, y: i64, color: Rgba<u8>) {
-        if x >= 0 && y >= 0 && (x as u32) < image.width() && (y as u32) < image.height() {
-            image.put_pixel(x as u32, y as u32, color);
-        }
     }
 
     fn save_png(image: &RgbaImage, path: &Path) -> Result<(), String> {

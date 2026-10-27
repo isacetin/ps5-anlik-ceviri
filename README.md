@@ -421,6 +421,7 @@ Tüm Mac seçenekleri için: [mac/README.md](mac/README.md).
 │   ├── core/                    Platformdan bağımsız mantık: PS5CeviriCore'un Rust karşılığı
 │   ├── engine/                  Çalışan iş hattı: TV istemcisi, mDNS ile TV bulma, DeepL, ana döngü
 │   ├── mac/                     Mac platform katmanı: CeviriBridge'i derleyip bağlar (build.rs)
+│   ├── windows/                 Windows platform katmanı: Windows.Graphics.Capture + Windows.Media.Ocr
 │   ├── cli/                     `ceviri` komut satırı aracı: `ps5ceviri` ile aynı komutlar
 │   └── winprobe/                Windows'ta Remote Play yakalama + OCR test aracı (Faz 0)
 └── tools/ws_test.py             Mac olmadan TV'ye sahte mesaj gönderen test scripti

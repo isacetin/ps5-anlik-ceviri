@@ -14,3 +14,6 @@ ceviri-engine.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 ceviri-mac.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+ceviri-windows.workspace = true

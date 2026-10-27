@@ -6,8 +6,8 @@ Windows'un yerleşik OCR'ının (`Windows.Media.Ocr`) oyun yazılarındaki kalit
 
 | Mac aracı (`mac/`) | winprobe |
 |---|---|
-| ScreenCaptureKit `SCStream` | `Windows.Graphics.Capture` (D3D11 frame pool) |
-| Vision `RecognizeTextRequest` | `Windows.Media.Ocr` |
+| ScreenCaptureKit `SCStream` | `Windows.Graphics.Capture` (D3D11 frame pool), `ceviri-windows` |
+| Vision `RecognizeTextRequest` | `Windows.Media.Ocr`, `ceviri-windows` |
 | `Geometry.videoRect`, `FrameStats` | `ceviri-core` (`desktop/core`, ortak) |
 
 Kullanıcı talimatları: [KULLANIM.txt](KULLANIM.txt) (exe ile birlikte verilir).

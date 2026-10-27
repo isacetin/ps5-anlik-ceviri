@@ -4,7 +4,7 @@ use windows::core::{BOOL, PWSTR};
 use windows::Wdk::System::SystemServices::RtlGetVersion;
 use windows::Win32::Foundation::{CloseHandle, HWND, LPARAM, POINT, RECT};
 use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_CLOAKED, DWMWA_EXTENDED_FRAME_BOUNDS};
-use windows::Win32::Graphics::Gdi::ClientToScreen;
+use windows::Win32::Graphics::Gdi::{ClientToScreen, GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST};
 use windows::Win32::System::SystemInformation::OSVERSIONINFOW;
 use windows::Win32::System::Threading::{
     OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
@@ -40,6 +40,19 @@ impl WindowInfo {
         let exe = self.exe.to_lowercase();
         let title = self.title.to_lowercase();
         exe.contains("remoteplay") || title.contains("remote play") || title.contains("uzaktan oynama")
+    }
+}
+
+/// Pencere bulunduğu monitörü tamamen kaplıyorsa (başlık çubuğu yok) tam ekrandır.
+pub fn is_fullscreen(window: &WindowInfo) -> bool {
+    unsafe {
+        let monitor = MonitorFromWindow(window.hwnd, MONITOR_DEFAULTTONEAREST);
+        let mut info = MONITORINFO { cbSize: std::mem::size_of::<MONITORINFO>() as u32, ..Default::default() };
+        if !GetMonitorInfoW(monitor, &mut info).as_bool() {
+            return false;
+        }
+        let screen = info.rcMonitor;
+        window.frame.left <= screen.left && window.frame.top <= screen.top && window.frame.right >= screen.right && window.frame.bottom >= screen.bottom
     }
 }
 

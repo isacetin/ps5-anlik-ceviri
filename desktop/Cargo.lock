@@ -88,6 +88,7 @@ dependencies = [
  "ceviri-core",
  "ceviri-engine",
  "ceviri-mac",
+ "ceviri-windows",
 ]
 
 [[package]]
@@ -119,6 +120,15 @@ dependencies = [
  "ceviri-core",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "ceviri-windows"
+version = "0.1.0"
+dependencies = [
+ "ceviri-core",
+ "image",
+ "windows",
 ]
 
 [[package]]
@@ -1059,6 +1069,7 @@ name = "winprobe"
 version = "0.1.0"
 dependencies = [
  "ceviri-core",
+ "ceviri-windows",
  "image",
  "windows",
 ]

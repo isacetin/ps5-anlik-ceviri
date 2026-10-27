@@ -30,7 +30,12 @@ pub fn run(job: impl FnOnce() -> Result<(), String> + Send + 'static) -> ! {
         ceviri_mac::run_main_loop()
     }
     #[cfg(not(target_os = "macos"))]
-    finish(job())
+    {
+        // Koordinatlar ölçeklenmeden fiziksel piksel olarak gelsin (yakalanan kareyle aynı birim).
+        #[cfg(windows)]
+        ceviri_windows::win::enable_dpi_awareness();
+        finish(job())
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -50,20 +55,36 @@ mod imp {
     }
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(windows)]
 mod imp {
     use super::*;
+    use ceviri_windows::{win, WindowsScreenReader};
 
-    // Windows katmanı (desktop/winprobe'daki Windows.Graphics.Capture + Windows.Media.Ocr kodu)
-    // ayrı bir crate'e taşınınca buraya bağlanacak.
-    const NOT_YET: &str = "Bu işletim sistemi için ekran okuma henüz bağlanmadı";
-
-    pub fn screen_reader(_app: Option<&str>, _fps: f64, _title_bar: Option<f64>) -> Result<Box<dyn ScreenReader>, String> {
-        Err(NOT_YET.into())
+    /// Windows'ta `app`, pencere başlığında ya da exe adında aranan metindir; `title_bar` piksel.
+    pub fn screen_reader(app: Option<&str>, _fps: f64, title_bar: Option<f64>) -> Result<Box<dyn ScreenReader>, String> {
+        Ok(Box::new(WindowsScreenReader::new(app, title_bar, 1.0)?))
     }
 
     pub fn list_windows() -> Result<Vec<Window>, String> {
-        Err(NOT_YET.into())
+        Ok(win::visible_windows()
+            .into_iter()
+            .map(|w| Window { app: w.exe.clone(), title: w.title.clone(), width: w.width().max(0) as u32, height: w.height().max(0) as u32 })
+            .collect())
+    }
+}
+
+#[cfg(not(any(target_os = "macos", windows)))]
+mod imp {
+    use super::*;
+
+    const UNSUPPORTED: &str = "Ekran okuma yalnızca macOS ve Windows'ta destekleniyor";
+
+    pub fn screen_reader(_app: Option<&str>, _fps: f64, _title_bar: Option<f64>) -> Result<Box<dyn ScreenReader>, String> {
+        Err(UNSUPPORTED.into())
+    }
+
+    pub fn list_windows() -> Result<Vec<Window>, String> {
+        Err(UNSUPPORTED.into())
     }
 }
 

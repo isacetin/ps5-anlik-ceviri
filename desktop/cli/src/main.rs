@@ -24,8 +24,10 @@ Kullanım:
   ceviri windows                 Ekrandaki pencereleri listeler
 
 Ortak seçenekler (run, read):
-    --bundle ID                  Okunacak uygulama (varsayılan: PS Remote Play)
-    --titlebar PT                Başlık çubuğu yüksekliği (varsayılan: tam ekranda 0, pencerede 28)
+    --bundle ID                  Okunacak uygulama (varsayılan: PS Remote Play). Mac: bundle ID,
+                                 Windows: pencere başlığında ya da exe adında geçen metin
+    --titlebar N                 Başlık çubuğu yüksekliği; Mac'te pt, Windows'ta piksel
+                                 (varsayılan: tam ekranda 0, pencerede otomatik)
     --dump KLASÖR                Her turda blok kutuları çizilmiş kareyi kaydeder";
 
 fn option(args: &[String], name: &str) -> Option<String> {
