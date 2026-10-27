@@ -17,7 +17,8 @@ ceviri-engine.workspace = true
 ceviri-platform.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-tauri = { version = "2", features = [] }
+# macos-private-api: şeffaf overlay penceresi için (yalnızca Mac App Store dağıtımını engeller).
+tauri = { version = "2", features = ["macos-private-api"] }
 
 [dev-dependencies]
 tungstenite = "0.30"

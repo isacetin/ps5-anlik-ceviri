@@ -8,14 +8,16 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod controller;
+mod overlay;
 
 use std::sync::Arc;
 
 use ceviri_core::storage;
 use ceviri_engine::pipeline::Backend;
 use ceviri_engine::DeepLClient;
-use controller::{BackendFactory, Controller, EventSink, ReaderFactory, Settings, Status};
-use tauri::{Emitter, Manager, State};
+use controller::{BackendFactory, Controller, EventSink, ReaderFactory, Settings, Status, UiEvent};
+use overlay::Overlay;
+use tauri::{Emitter, Manager, State, WindowEvent};
 
 const SAMPLE: &str = "The door is locked.";
 
@@ -62,8 +64,13 @@ fn main() {
     tauri::Builder::default()
         .setup(|app| {
             let handle = app.handle().clone();
-            let emit: EventSink = Arc::new(move |event| {
-                let _ = handle.emit("ceviri", event);
+            let overlay = Overlay::new(handle.clone());
+            // Overlay kareleri overlay penceresine, gerisi ana pencereye.
+            let emit: EventSink = Arc::new(move |event| match event {
+                UiEvent::Frame { blocks, screen } => overlay.show(&blocks, screen),
+                other => {
+                    let _ = handle.emit_to("main", "ceviri", other);
+                }
             });
             let make_reader: ReaderFactory = Arc::new(|settings: &Settings| {
                 let window = settings.window.trim();
@@ -86,6 +93,12 @@ fn main() {
                 let _ = window.set_focus();
             }
             Ok(())
+        })
+        // Ana pencere kapanınca uygulama da kapansın (overlay penceresi açık kalsa bile).
+        .on_window_event(|window, event| {
+            if window.label() == "main" && matches!(event, WindowEvent::CloseRequested { .. }) {
+                window.app_handle().exit(0);
+            }
         })
         .invoke_handler(tauri::generate_handler![status, save_settings, start, stop, save_deepl_key])
         .run(tauri::generate_context!())

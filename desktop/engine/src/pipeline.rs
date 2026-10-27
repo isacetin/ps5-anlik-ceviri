@@ -8,7 +8,7 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use ceviri_core::{block_merger, language, storage, translator, OverlayBlock, ReadError, ScreenReader, StableBlock, Stabilizer, TranslationError, Translator};
+use ceviri_core::{block_merger, language, storage, translator, OverlayBlock, ReadError, Rect, ScreenReader, StableBlock, Stabilizer, TranslationError, Translator};
 
 use crate::tv_client::TvClient;
 
@@ -53,8 +53,11 @@ pub enum Event {
     /// Hedef pencere kayboldu; açılması bekleniyor.
     WaitingForWindow(String),
     WindowFound,
-    /// TV'de gösterilen liste değişti.
+    /// Gösterilen liste değişti (TV'ye gittiyse ya da TV yoksa).
     Shown(Vec<String>),
+    /// Her tur: o an gösterilmesi gereken bloklar ve video alanının ekrandaki yeri (ekran
+    /// overlay'i için; pencere yoksa boş liste ve `None`).
+    Frame { blocks: Vec<OverlayBlock>, screen: Option<Rect> },
     TvConnected,
     TvUnreachable(String),
     TranslationFailed(TranslationError),
@@ -63,13 +66,14 @@ pub enum Event {
 
 pub struct Pipeline {
     reader: Box<dyn ScreenReader>,
-    tv: TvClient,
+    /// `None`: yalnızca ekran overlay'i (TV'ye gönderilmez).
+    tv: Option<TvClient>,
     config: Config,
     stop: Arc<AtomicBool>,
 }
 
 impl Pipeline {
-    pub fn new(reader: Box<dyn ScreenReader>, tv: TvClient, config: Config) -> Pipeline {
+    pub fn new(reader: Box<dyn ScreenReader>, tv: Option<TvClient>, config: Config) -> Pipeline {
         Pipeline { reader, tv, config, stop: Arc::new(AtomicBool::new(false)) }
     }
 
@@ -105,8 +109,10 @@ impl Pipeline {
             }
 
             let mut blocks: Vec<OverlayBlock> = Vec::new();
+            let mut screen = None;
             match self.reader.read() {
                 Ok(reading) => {
+                    screen = reading.screen;
                     if waiting_for_window {
                         on_event(Event::WindowFound);
                     }
@@ -156,18 +162,24 @@ impl Pipeline {
             }
 
             // Liste değişmese de her tur gönderilir: TV 3 sn mesaj almazsa yazıları kaldırır.
-            let sent = self.tv.send(&blocks);
-            match &sent {
-                Ok(()) if tv_ok != Some(true) => on_event(Event::TvConnected),
-                Err(error) if tv_ok != Some(false) => on_event(Event::TvUnreachable(error.clone())),
-                _ => {}
+            let sent = match self.tv.as_mut() {
+                Some(tv) => tv.send(&blocks),
+                None => Ok(()),
+            };
+            if self.tv.is_some() {
+                match &sent {
+                    Ok(()) if tv_ok != Some(true) => on_event(Event::TvConnected),
+                    Err(error) if tv_ok != Some(false) => on_event(Event::TvUnreachable(error.clone())),
+                    _ => {}
+                }
+                tv_ok = Some(sent.is_ok());
             }
-            tv_ok = Some(sent.is_ok());
             let shown: Vec<String> = blocks.iter().map(|b| b.text.clone()).collect();
             if sent.is_ok() && shown != last_shown {
                 on_event(Event::Shown(shown.clone()));
                 last_shown = shown;
             }
+            on_event(Event::Frame { blocks, screen });
 
             if self.config.once {
                 std::thread::sleep(Duration::from_secs(2));
@@ -176,7 +188,10 @@ impl Pipeline {
             let pause = if sent.is_err() { Duration::from_secs(2) } else { Duration::from_secs_f64(1.0 / fps).saturating_sub(round_start.elapsed()) };
             sleep_unless_stopped(pause, &self.stop);
         }
-        self.tv.close();
+        if let Some(tv) = self.tv.as_mut() {
+            tv.close();
+        }
+        on_event(Event::Frame { blocks: Vec::new(), screen: None });
     }
 }
 
@@ -236,7 +251,7 @@ mod tests {
             if self.calls <= self.missing {
                 return Err(ReadError::WindowNotFound("pencere yok".into()));
             }
-            Ok(Reading { lines: self.lines.clone(), video_width: 1920, video_height: 1080, fullscreen: true, capture_ms: 1, ocr_ms: 1 })
+            Ok(Reading { lines: self.lines.clone(), video_width: 1920, video_height: 1080, fullscreen: true, capture_ms: 1, ocr_ms: 1, screen: None })
         }
     }
 
@@ -261,7 +276,7 @@ mod tests {
         address: String,
         done: impl Fn(&OverlayMessage) -> bool,
     ) -> (Vec<OverlayMessage>, Vec<Event>) {
-        let mut pipeline = Pipeline::new(Box::new(reader), TvClient::new(address), config);
+        let mut pipeline = Pipeline::new(Box::new(reader), Some(TvClient::new(address)), config);
         let stop = pipeline.stop_handle();
         let worker = thread::spawn(move || {
             let mut events = Vec::new();
@@ -371,7 +386,7 @@ mod tests {
         let attempt_started = Instant::now();
         assert!(TvClient::new(address.clone()).send(&[]).is_err());
         let one_attempt = attempt_started.elapsed();
-        let mut pipeline = Pipeline::new(Box::new(FakeReader { lines: menu(), missing: 0, calls: 0 }), TvClient::new(address), fast());
+        let mut pipeline = Pipeline::new(Box::new(FakeReader { lines: menu(), missing: 0, calls: 0 }), Some(TvClient::new(address)), fast());
         let stop = pipeline.stop_handle();
         let worker = thread::spawn(move || {
             let mut events = Vec::new();

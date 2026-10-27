@@ -18,6 +18,9 @@ pub struct Reading {
     pub fullscreen: bool,
     pub capture_ms: u64,
     pub ocr_ms: u64,
+    /// Video alanının ekrandaki yeri: mantıksal birim (Mac'te nokta, Windows'ta DPI'a göre
+    /// ölçeklenmiş piksel), origin ana ekranın sol üstü. Ekran overlay'i buraya oturur.
+    pub screen: Option<Rect>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

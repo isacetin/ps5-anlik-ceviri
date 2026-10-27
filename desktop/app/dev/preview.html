@@ -54,7 +54,13 @@
       <details id="settings-panel">
         <summary><h2>Ayarlar</h2></summary>
         <form id="settings" class="form">
-          <label class="field">
+          <fieldset class="field">
+            <legend>Çevirileri nerede göster?</legend>
+            <label class="choice"><input type="radio" name="output" value="tv"> TV'de (Android TV uygulaması, HDMI görüntünün üstü)</label>
+            <label class="choice"><input type="radio" name="output" value="screen"> Bu ekranda, oyun penceresinin üstünde</label>
+            <label class="choice"><input type="radio" name="output" value="both"> İkisinde de</label>
+          </fieldset>
+          <label class="field" id="tv-address-field">
             <span>TV adresi</span>
             <input id="tv-address" type="text" placeholder="Boş bırakın: otomatik bul" autocomplete="off" spellcheck="false">
           </label>

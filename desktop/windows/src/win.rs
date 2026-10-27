@@ -9,7 +9,7 @@ use windows::Win32::System::SystemInformation::OSVERSIONINFOW;
 use windows::Win32::System::Threading::{
     OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
 };
-use windows::Win32::UI::HiDpi::{SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2};
+use windows::Win32::UI::HiDpi::{GetDpiForWindow, SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2};
 use windows::Win32::UI::WindowsAndMessaging::{
     EnumWindows, GetWindowTextW, GetWindowThreadProcessId, IsIconic, IsWindowVisible,
 };
@@ -40,6 +40,16 @@ impl WindowInfo {
         let exe = self.exe.to_lowercase();
         let title = self.title.to_lowercase();
         exe.contains("remoteplay") || title.contains("remote play") || title.contains("uzaktan oynama")
+    }
+}
+
+/// Pencerenin bulunduğu monitörün ölçeği (100% = 1.0, 150% = 1.5): fiziksel piksel / mantıksal birim.
+pub fn scale_factor(window: &WindowInfo) -> f64 {
+    let dpi = unsafe { GetDpiForWindow(window.hwnd) };
+    if dpi == 0 {
+        1.0
+    } else {
+        dpi as f64 / 96.0
     }
 }
 

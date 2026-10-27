@@ -181,3 +181,4 @@ code { font-size: 11px; padding: 1px 4px; border-radius: 4px; background: var(--
   user-select: text;
   -webkit-user-select: text;
 }
+[hidden] { display: none !important; }

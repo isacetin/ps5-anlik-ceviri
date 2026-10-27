@@ -26,6 +26,8 @@ public struct Reading: @unchecked Sendable {
     public let fullscreen: Bool
     public let captureMilliseconds: Int64
     public let ocrMilliseconds: Int64
+    /// Video alanının ekrandaki yeri (nokta, global koordinat, origin ana ekranın sol üstü).
+    public let screenRect: Rect
 }
 
 /// Bir tur ekran okuma: pencereyi bul → akışı açık tut → en son karenin 16:9 video alanını kes → OCR.
@@ -65,7 +67,13 @@ public final class ScreenReader {
             frame: frame,
             fullscreen: fullscreen,
             captureMilliseconds: Self.milliseconds(captured - start),
-            ocrMilliseconds: Self.milliseconds(clock.now - captured)
+            ocrMilliseconds: Self.milliseconds(clock.now - captured),
+            screenRect: Rect(
+                x: window.frame.minX + video.x / scale,
+                y: window.frame.minY + video.y / scale,
+                width: video.width / scale,
+                height: video.height / scale
+            )
         )
     }
 

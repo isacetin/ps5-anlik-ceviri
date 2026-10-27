@@ -7,14 +7,37 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use ceviri_core::{storage, ScreenReader};
+use ceviri_core::{storage, OverlayBlock, ScreenReader};
 use ceviri_engine::pipeline::Backend;
 use ceviri_engine::{discovery, tv_client, Config, Event, Pipeline, TvClient};
 use serde::{Deserialize, Serialize};
 
+/// Çevirilerin nerede gösterileceği.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Output {
+    /// Android TV'deki overlay (HDMI görüntünün üstü).
+    #[default]
+    Tv,
+    /// Bu bilgisayarın ekranında, oyun penceresinin üstünde.
+    Screen,
+    Both,
+}
+
+impl Output {
+    pub fn tv(self) -> bool {
+        matches!(self, Output::Tv | Output::Both)
+    }
+
+    pub fn screen(self) -> bool {
+        matches!(self, Output::Screen | Output::Both)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct Settings {
+    pub output: Output,
     /// Boşsa TV yerel ağda aranır.
     pub tv_address: String,
     /// `false`: çevirisiz test modu (İngilizce metin olduğu gibi gider, kota harcamaz).
@@ -26,7 +49,7 @@ pub struct Settings {
 
 impl Default for Settings {
     fn default() -> Settings {
-        Settings { tv_address: String::new(), translate: true, fps: 2.0, window: String::new() }
+        Settings { output: Output::Tv, tv_address: String::new(), translate: true, fps: 2.0, window: String::new() }
     }
 }
 
@@ -58,6 +81,17 @@ pub enum UiEvent {
     Shown { texts: Vec<String> },
     Round { video: String, capture_ms: u64, ocr_ms: u64, blocks: usize, sent: usize },
     Error { message: String },
+    /// Ekran overlay'ine: gösterilecek bloklar ve video alanının ekrandaki yeri (yoksa gizle).
+    Frame { blocks: Vec<OverlayBlock>, screen: Option<ScreenRect> },
+}
+
+/// Mantıksal birim (Mac'te nokta), origin ana ekranın sol üstü.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+pub struct ScreenRect {
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
 }
 
 pub type EventSink = Arc<dyn Fn(UiEvent) + Send + Sync>;
@@ -147,12 +181,16 @@ impl Inner {
         let settings = self.settings.lock().unwrap().clone();
         let state = |state: &str, detail: &str| (self.emit)(UiEvent::State { state: state.into(), detail: detail.into() });
 
-        let address = if settings.tv_address.trim().is_empty() {
+        let address = if !settings.output.tv() {
+            None
+        } else if settings.tv_address.trim().is_empty() {
             state("starting", "TV yerel ağda aranıyor…");
-            discovery::find_tv(Duration::from_secs(5))
-                .ok_or("TV bulunamadı. TV'de uygulama açık mı? Ayarlardan TV adresini elle girebilirsiniz.")?
+            Some(
+                discovery::find_tv(Duration::from_secs(5))
+                    .ok_or("TV bulunamadı. TV'de uygulama açık mı? Ayarlardan TV adresini elle girebilirsiniz.")?,
+            )
         } else {
-            tv_client::with_default_port(settings.tv_address.trim())
+            Some(tv_client::with_default_port(settings.tv_address.trim()))
         };
         if stop.load(Ordering::Relaxed) {
             return Ok(());
@@ -170,10 +208,16 @@ impl Inner {
         state("running", if settings.translate { "Türkçe çeviri" } else { "Çevirisiz test modu" });
 
         let emit = self.emit.clone();
-        let tv_url = format!("ws://{address}");
-        let mut pipeline = Pipeline::new(reader, TvClient::new(address), config).with_stop(stop);
+        let tv_url = address.as_ref().map(|a| format!("ws://{a}")).unwrap_or_default();
+        let screen_output = settings.output.screen();
+        let mut pipeline = Pipeline::new(reader, address.map(TvClient::new), config).with_stop(stop);
         pipeline.run(move |event| {
             let ui = match event {
+                Event::Frame { blocks, screen } if screen_output => UiEvent::Frame {
+                    blocks,
+                    screen: screen.map(|r| ScreenRect { x: r.x, y: r.y, width: r.width, height: r.height }),
+                },
+                Event::Frame { .. } => return,
                 Event::Round(s) => UiEvent::Round {
                     video: format!("{}x{}", s.video_width, s.video_height),
                     capture_ms: s.capture_ms,
@@ -211,7 +255,7 @@ mod tests {
     impl ScreenReader for FakeReader {
         fn read(&mut self) -> Result<Reading, ReadError> {
             let line = TextLine { text: "Play Local".into(), bbox: Rect::new(0.1, 0.5, 0.1, 0.03), confidence: 0.9 };
-            Ok(Reading { lines: vec![line], video_width: 1920, video_height: 1080, fullscreen: true, capture_ms: 1, ocr_ms: 1 })
+            Ok(Reading { lines: vec![line], video_width: 1920, video_height: 1080, fullscreen: true, capture_ms: 1, ocr_ms: 1, screen: None })
         }
     }
 
@@ -313,6 +357,35 @@ mod tests {
     }
 
     #[test]
+    fn ekran_modunda_tv_aranmaz_ve_overlay_kareleri_gelir() {
+        let settings = Settings { output: Output::Screen, translate: false, fps: 20.0, ..Settings::default() };
+        let (controller, events) = controller(settings, no_backend());
+
+        controller.start().unwrap();
+        let seen = wait_for(&events, |e| matches!(e, UiEvent::Frame { blocks, .. } if !blocks.is_empty()));
+        controller.stop();
+
+        assert!(!seen.iter().any(|e| matches!(e, UiEvent::Tv { .. })), "TV olayı gelmemeli");
+        assert!(seen.iter().any(|e| matches!(e, UiEvent::Shown { texts } if texts == &["Play Local"])));
+        let last = wait_for(&events, |e| matches!(e, UiEvent::State { state, .. } if state == "stopped"));
+        // Durunca overlay'e "gizle" (boş liste, konum yok) gider.
+        assert!(last.contains(&UiEvent::Frame { blocks: vec![], screen: None }));
+    }
+
+    #[test]
+    fn tv_modunda_overlay_karesi_gonderilmez() {
+        let (address, _messages) = fake_tv();
+        let settings = Settings { tv_address: address, translate: false, fps: 20.0, ..Settings::default() };
+        let (controller, events) = controller(settings, no_backend());
+
+        controller.start().unwrap();
+        let seen = wait_for(&events, |e| matches!(e, UiEvent::Shown { texts } if !texts.is_empty()));
+        controller.stop();
+
+        assert!(!seen.iter().any(|e| matches!(e, UiEvent::Frame { .. })));
+    }
+
+    #[test]
     fn calisirken_ayar_degismez() {
         let (address, _messages) = fake_tv();
         let settings = Settings { tv_address: address, translate: false, fps: 20.0, ..Settings::default() };
@@ -333,5 +406,7 @@ mod tests {
 
         let settings: Settings = serde_json::from_str(r#"{"tvAddress":"192.168.1.5"}"#).unwrap();
         assert_eq!(settings, Settings { tv_address: "192.168.1.5".into(), ..Settings::default() });
+        let both: Settings = serde_json::from_str(r#"{"output":"both"}"#).unwrap();
+        assert_eq!(both.output, Output::Both);
     }
 }

@@ -102,8 +102,19 @@ impl ScreenReader for WindowsScreenReader {
         let fullscreen = win::is_fullscreen(&window);
         let scale_y = image.height() as f64 / window.height().max(1) as f64;
         let top_inset = self.title_bar.unwrap_or(if fullscreen { 0.0 } else { window.top_inset as f64 * scale_y });
-        let video = crop(&image, video_rect(image.width() as f64, image.height() as f64, top_inset));
+        let video_px = video_rect(image.width() as f64, image.height() as f64, top_inset);
+        let video = crop(&image, video_px);
         let captured = Instant::now();
+
+        // Kare pencere sınırının fiziksel piksel karşılığıdır; ekran konumu mantıksal birime çevrilir.
+        let scale_x = image.width() as f64 / window.width().max(1) as f64;
+        let dpi = win::scale_factor(&window);
+        let screen = Rect::new(
+            (window.frame.left as f64 + video_px.x / scale_x) / dpi,
+            (window.frame.top as f64 + video_px.y / scale_y) / dpi,
+            video_px.width / scale_x / dpi,
+            video_px.height / scale_y / dpi,
+        );
 
         let prepared = prepare_for_ocr(&video, self.ocr_scale, self.max_dimension);
         let lines = ocr::recognize(&self.engine, &prepared).map_err(|e| ReadError::Other(format!("OCR hatası: {e}")))?;
@@ -114,6 +125,7 @@ impl ScreenReader for WindowsScreenReader {
             fullscreen,
             capture_ms: (captured - start).as_millis() as u64,
             ocr_ms: captured.elapsed().as_millis() as u64,
+            screen: Some(screen),
         };
         self.last_video = Some(video);
         Ok(reading)

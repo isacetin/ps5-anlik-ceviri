@@ -418,7 +418,8 @@ Tüm Mac seçenekleri için: [mac/README.md](mac/README.md).
 │   ├── Sources/CeviriBridge/    PS5CeviriMac'i Rust'a açan C ABI (statik kütüphane)
 │   └── Sources/ps5ceviri/       DeepL, WebSocket, TV bulma, komut satırı
 ├── desktop/                     Mac + Windows masaüstü uygulaması (Rust workspace, geliştiriliyor)
-│   ├── app/                     Masaüstü uygulaması (Tauri): Başlat/Durdur, durum, ayarlar, DeepL anahtarı
+│   ├── app/                     Masaüstü uygulaması (Tauri): Başlat/Durdur, durum, ayarlar, DeepL anahtarı,
+│   │                            ekran overlay'i (çeviri TV yerine/yanında oyun penceresinin üstünde)
 │   ├── core/                    Platformdan bağımsız mantık: PS5CeviriCore'un Rust karşılığı
 │   ├── engine/                  Çalışan iş hattı: TV istemcisi, mDNS ile TV bulma, DeepL, ana döngü
 │   ├── mac/                     Mac platform katmanı: CeviriBridge'i derleyip bağlar (build.rs)
@@ -439,6 +440,10 @@ Masaüstü uygulamasını çalıştırmak için (Remote Play açıkken):
 ```bash
 cd desktop && cargo run --release -p ceviri-app
 ```
+
+Ayarlardaki **"Çevirileri nerede göster?"** seçeneğiyle çeviri TV'de, bu bilgisayarın ekranında
+(oyun penceresinin üstünde, şeffaf ve tıklamayı geçiren bir katman) ya da ikisinde gösterilir. Ekran
+modu Android TV gerektirmez: Samsung/LG televizyonlarla ya da oyunu bilgisayardan oynarken kullanılır.
 
 Arayüzü uygulamayı açmadan görmek için `desktop/app/dev/preview.html` tarayıcıda açılabilir (sahte
 verilerle; `?calisiyor` ve `?ayarlar` parametreleri farklı durumları gösterir).

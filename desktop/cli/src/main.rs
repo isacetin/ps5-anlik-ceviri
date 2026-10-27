@@ -90,7 +90,7 @@ fn run(args: &[String]) -> Result<(), String> {
     println!("OCR modeli yükleniyor; ilk okuma ~30 sn sürebilir...");
 
     let reader = platform::screen_reader(option(args, "--bundle").as_deref(), fps, title_bar)?;
-    let mut pipeline = Pipeline::new(reader, tv, config);
+    let mut pipeline = Pipeline::new(reader, Some(tv), config);
     pipeline.run(|event| match event {
         Event::Round(stats) if verbose => println!(
             "#{} video {}x{}  yakalama {} ms  OCR {} ms  {} blok, {} sabit, {} gönderilen",
@@ -105,6 +105,7 @@ fn run(args: &[String]) -> Result<(), String> {
         Event::TvUnreachable(error) => eprintln!("{error}"),
         Event::TranslationFailed(error) => eprintln!("DeepL hatası: {error}"),
         Event::RoundSkipped(error) => eprintln!("Tur atlandı: {error}"),
+        Event::Frame { .. } => {}
     });
     Ok(())
 }

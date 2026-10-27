@@ -129,6 +129,7 @@ private struct ReadingJSON: Encodable {
     let fullscreen: Bool
     let captureMs: Int64
     let ocrMs: Int64
+    let screen: BoxJSON
 
     init(_ reading: Reading) {
         lines = reading.lines.map {
@@ -139,6 +140,8 @@ private struct ReadingJSON: Encodable {
         fullscreen = reading.fullscreen
         captureMs = reading.captureMilliseconds
         ocrMs = reading.ocrMilliseconds
+        let rect = reading.screenRect
+        screen = BoxJSON(x: rect.x, y: rect.y, w: rect.width, h: rect.height)
     }
 }
 
@@ -161,7 +164,7 @@ private struct ErrorJSON: Encodable {
     }
 }
 
-private struct BoxJSON: Decodable {
+private struct BoxJSON: Codable {
     let x, y, w, h: Double
 }
 

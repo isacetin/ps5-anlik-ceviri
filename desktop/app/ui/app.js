@@ -5,6 +5,7 @@ const { listen } = window.__TAURI__.event;
 const $ = (id) => document.getElementById(id);
 let running = false;
 let busy = false;
+let currentOutput = "tv";
 
 function setLevel(dot, level) {
   $(dot).dataset.level = level;
@@ -29,7 +30,7 @@ function setState(state, detail) {
   for (const element of $("settings").elements) element.disabled = running;
   if (!running) {
     setLevel("tv-dot", "idle");
-    $("tv-value").textContent = "Bağlı değil";
+    $("tv-value").textContent = usesTv(currentOutput) ? "Bağlı değil" : "Kullanılmıyor";
     setLevel("window-dot", "idle");
     $("window-value").textContent = "—";
     $("stats").hidden = true;
@@ -55,7 +56,14 @@ function renderShown(texts) {
   }
 }
 
+const usesTv = (output) => output === "tv" || output === "both";
+
 function renderSettings(settings) {
+  currentOutput = settings.output;
+  for (const radio of document.querySelectorAll('input[name="output"]')) {
+    radio.checked = radio.value === settings.output;
+  }
+  $("tv-address-field").hidden = !usesTv(settings.output);
   $("tv-address").value = settings.tvAddress;
   for (const radio of document.querySelectorAll('input[name="mode"]')) {
     radio.checked = radio.value === (settings.translate ? "translate" : "test");
@@ -64,10 +72,12 @@ function renderSettings(settings) {
   $("window").value = settings.window;
   $("mode-value").textContent = settings.translate ? "Türkçe (DeepL)" : "Çevirisiz test";
   setLevel("mode-dot", settings.translate ? "ok" : "warn");
+  if (!running) $("tv-value").textContent = usesTv(settings.output) ? "Bağlı değil" : "Kullanılmıyor";
 }
 
 function readSettings() {
   return {
+    output: document.querySelector('input[name="output"]:checked')?.value ?? "tv",
     tvAddress: $("tv-address").value.trim(),
     translate: document.querySelector('input[name="mode"]:checked')?.value !== "test",
     fps: Number($("fps").value),
@@ -137,6 +147,10 @@ $("toggle").addEventListener("click", async () => {
     $("toggle").disabled = false;
   }
 });
+
+for (const radio of document.querySelectorAll('input[name="output"]')) {
+  radio.addEventListener("change", () => ($("tv-address-field").hidden = !usesTv(radio.value)));
+}
 
 $("settings").addEventListener("submit", async (event) => {
   event.preventDefault();

@@ -90,13 +90,6 @@ impl ScreenReader for MacScreenReader {
     }
 
     fn dump(&self, path: &Path, boxes: &[Rect]) -> Result<(), String> {
-        #[derive(Serialize)]
-        struct BoxJson {
-            x: f64,
-            y: f64,
-            w: f64,
-            h: f64,
-        }
         let boxes: Vec<BoxJson> = boxes.iter().map(|b| BoxJson { x: b.x, y: b.y, w: b.width, h: b.height }).collect();
         let path = CString::new(path.to_string_lossy().as_bytes()).map_err(|_| "geçersiz yol")?;
         let boxes = CString::new(serde_json::to_string(&boxes).unwrap()).unwrap();
@@ -128,6 +121,15 @@ struct ReadingJson {
     fullscreen: bool,
     capture_ms: u64,
     ocr_ms: u64,
+    screen: Option<BoxJson>,
+}
+
+#[derive(Deserialize, Serialize)]
+struct BoxJson {
+    x: f64,
+    y: f64,
+    w: f64,
+    h: f64,
 }
 
 #[derive(Deserialize)]
@@ -166,6 +168,7 @@ fn parse_reading(json: &str) -> Result<Reading, ReadError> {
         fullscreen: reading.fullscreen,
         capture_ms: reading.capture_ms,
         ocr_ms: reading.ocr_ms,
+        screen: reading.screen.map(|b| Rect::new(b.x, b.y, b.w, b.h)),
     })
 }
 
@@ -186,7 +189,8 @@ mod tests {
     #[test]
     fn kopru_okuma_yaniti_cozulur() {
         let json = r#"{"reading":{"lines":[{"text":"Play Local","x":0.1,"y":0.5,"w":0.2,"h":0.03,"confidence":1}],
-            "videoWidth":1920,"videoHeight":1080,"fullscreen":true,"captureMs":3,"ocrMs":95}}"#;
+            "videoWidth":1920,"videoHeight":1080,"fullscreen":true,"captureMs":3,"ocrMs":95,
+            "screen":{"x":100,"y":28,"w":960,"h":540}}}"#;
 
         let reading = parse_reading(json).unwrap();
 
@@ -195,6 +199,7 @@ mod tests {
         assert_eq!(reading.lines[0].bbox, Rect::new(0.1, 0.5, 0.2, 0.03));
         assert_eq!((reading.video_width, reading.video_height, reading.fullscreen), (1920, 1080, true));
         assert_eq!((reading.capture_ms, reading.ocr_ms), (3, 95));
+        assert_eq!(reading.screen, Some(Rect::new(100.0, 28.0, 960.0, 540.0)));
     }
 
     #[test]
