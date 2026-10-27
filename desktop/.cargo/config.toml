@@ -2,3 +2,7 @@
 [target.x86_64-pc-windows-gnu]
 linker = "x86_64-w64-mingw32-gcc"
 rustflags = ["-C", "target-feature=+crt-static"]
+
+# Swift köprüsü macOS 15 için derlenir; Rust tarafı da aynı hedefle bağlanmalı.
+[env]
+MACOSX_DEPLOYMENT_TARGET = "15.0"

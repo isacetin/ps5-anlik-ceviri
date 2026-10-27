@@ -8,7 +8,7 @@ import VideoToolbox
 /// Remote Play penceresinden sürekli kare akışı. Her turda yeni ekran görüntüsü istemek
 /// (SCScreenshotManager) bir istek takılınca sonrakileri de kilitliyordu; akış en son kareyi tutar,
 /// ana döngü istediği an okur. Pencere değişirse ya da akış durursa yeniden başlatılır.
-final class FrameStream: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Sendable {
+public final class FrameStream: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Sendable {
     private let queue = DispatchQueue(label: "ps5ceviri.frames")
     private let latest = Mutex<CGImage?>(nil)
     private let stopped = Mutex(true)
@@ -17,9 +17,13 @@ final class FrameStream: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked 
     private var windowID: CGWindowID?
     private var windowSize: CGSize = .zero
 
+    override public init() {
+        super.init()
+    }
+
     /// Akışı verilen pencere için çalışır durumda tutar; pencere ya da boyutu değiştiyse yeniden başlatır.
     @MainActor
-    func ensureRunning(for window: SCWindow, fps: Double) async throws {
+    public func ensureRunning(for window: SCWindow, fps: Double) async throws {
         let isRunning = stream != nil && !stopped.withLock { $0 }
         if isRunning, windowID == window.windowID, windowSize == window.frame.size { return }
         await stop()
@@ -47,12 +51,12 @@ final class FrameStream: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked 
     }
 
     /// En son tam kare; akış henüz kare üretmediyse nil.
-    func latestFrame() -> CGImage? {
+    public func latestFrame() -> CGImage? {
         latest.withLock { $0 }
     }
 
     @MainActor
-    func stop() async {
+    public func stop() async {
         guard let current = stream else { return }
         stream = nil
         stopped.withLock { $0 = true }
@@ -60,14 +64,14 @@ final class FrameStream: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked 
         try? await withTimeout(seconds: 2) { try await stopping.stopCapture() }
     }
 
-    func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of type: SCStreamOutputType) {
+    public func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of type: SCStreamOutputType) {
         guard type == .screen, isComplete(sampleBuffer), let pixelBuffer = sampleBuffer.imageBuffer else { return }
         var image: CGImage?
         VTCreateCGImageFromCVPixelBuffer(pixelBuffer, options: nil, imageOut: &image)
         if let image { latest.withLock { $0 = image } }
     }
 
-    func stream(_ stream: SCStream, didStopWithError error: Error) {
+    public func stream(_ stream: SCStream, didStopWithError error: Error) {
         stopped.withLock { $0 = true }
         FileHandle.standardError.write(Data("Kare akışı durdu: \(error.localizedDescription)\n".utf8))
     }

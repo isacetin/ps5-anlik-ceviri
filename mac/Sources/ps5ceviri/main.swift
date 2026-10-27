@@ -1,6 +1,7 @@
 import AppKit
 import Foundation
 import PS5CeviriCore
+import PS5CeviriMac
 // macOS 15 SDK'sında SCWindow henüz Sendable değil; Swift 6 bunu hata sayar (CI, Xcode 16).
 @preconcurrency import ScreenCaptureKit
 
@@ -106,9 +107,7 @@ func run(args: [String]) async throws {
         url = found
     }
 
-    let capture = RemotePlayCapture(bundleID: option("--bundle", in: args) ?? remotePlayBundleID)
-    let recognizer = TextRecognizer()
-    let frames = FrameStream()
+    let reader = ScreenReader(bundleID: option("--bundle", in: args) ?? remotePlayBundleID, fps: fps, titleBarOverride: titleBarOverride)
     let client = OverlayClient(url: url)
     let clock = ContinuousClock()
     let startedAt = clock.now
@@ -129,23 +128,12 @@ func run(args: [String]) async throws {
         let roundStart = clock.now
         var blocks: [OverlayBlock] = []
         do {
-            let (window, fullscreen) = try await capture.findWindowWithDisplayInfo()
+            let reading = try await reader.read()
             if waitingForWindow { print("Remote Play penceresi bulundu.") }
             waitingForWindow = false
 
-            try await frames.ensureRunning(for: window, fps: fps)
-            guard let image = frames.latestFrame() else { throw CommandError("akıştan henüz kare gelmedi") }
-            let scale = Double(image.width) / window.frame.width
-            let titleBar = (titleBarOverride ?? (fullscreen ? 0 : 28)) * scale
-            let video = Geometry.videoRect(imageWidth: Double(image.width), imageHeight: Double(image.height), topInset: titleBar)
-            guard let frame = image.cropping(to: CGRect(x: video.x, y: video.y, width: video.width, height: video.height)) else {
-                throw CommandError("Video alanı kırpılamadı: \(video)")
-            }
-            let captured = clock.now
-
-            let merged = BlockMerger.merge(try await recognizer.recognize(frame))
+            let merged = BlockMerger.merge(reading.lines)
             let stable = stabilizer.update(merged, now: elapsed())
-            let recognized = clock.now
 
             if let translator {
                 let english = stable.filter { !LanguageFilter.looksTurkish($0.text) }
@@ -164,16 +152,16 @@ func run(args: [String]) async throws {
             }
 
             if verbose {
-                print("#\(round) video \(frame.width)x\(frame.height)  yakalama \(milliseconds(captured - roundStart)) ms  OCR \(milliseconds(recognized - captured)) ms  \(merged.count) blok, \(stable.count) sabit, \(blocks.count) gönderilen")
+                print("#\(round) video \(reading.frame.width)x\(reading.frame.height)  yakalama \(reading.captureMilliseconds) ms  OCR \(reading.ocrMilliseconds) ms  \(merged.count) blok, \(stable.count) sabit, \(blocks.count) gönderilen")
             }
-            if let dumpDir, let boxed = drawBoxes(on: frame, boxes: merged.map(\.box)) {
+            if let dumpDir, let boxed = drawBoxes(on: reading.frame, boxes: merged.map(\.box)) {
                 try writePNG(boxed, to: dumpDir.appendingPathComponent(String(format: "ocr_%04d.png", round)))
             }
         } catch CaptureError.windowNotFound {
             if !waitingForWindow { print("Remote Play penceresi yok; açılması bekleniyor...") }
             waitingForWindow = true
             stabilizer = Stabilizer()
-            await frames.stop()
+            await reader.stop()
         } catch {
             FileHandle.standardError.write(Data("Tur #\(round) atlandı: \(error)\n".utf8))
         }

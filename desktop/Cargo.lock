@@ -51,6 +51,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8f1fe948ff07f4bd06c30984e69f5b4899c516a3ef74f34df92a2df2ab535495"
 
 [[package]]
+name = "ceviri-cli"
+version = "0.1.0"
+dependencies = [
+ "ceviri-core",
+ "ceviri-mac",
+]
+
+[[package]]
 name = "ceviri-core"
 version = "0.1.0"
 dependencies = [
@@ -59,6 +67,15 @@ dependencies = [
  "serde_json",
  "unicode-normalization",
  "whatlang",
+]
+
+[[package]]
+name = "ceviri-mac"
+version = "0.1.0"
+dependencies = [
+ "ceviri-core",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

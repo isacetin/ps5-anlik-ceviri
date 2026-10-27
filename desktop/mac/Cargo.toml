@@ -1,0 +1,11 @@
+[package]
+name = "ceviri-mac"
+description = "Mac platform katmanı: mac/ Swift paketindeki ScreenCaptureKit + Vision kodunu C ABI ile Rust'a açar"
+edition.workspace = true
+version.workspace = true
+build = "build.rs"
+
+[dependencies]
+ceviri-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true

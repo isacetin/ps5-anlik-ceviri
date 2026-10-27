@@ -5,13 +5,13 @@ import PS5CeviriCore
 import ScreenCaptureKit
 import UniformTypeIdentifiers
 
-let remotePlayBundleID = "com.playstation.RemotePlay"
+public let remotePlayBundleID = "com.playstation.RemotePlay"
 
-enum CaptureError: Error, CustomStringConvertible {
+public enum CaptureError: Error, CustomStringConvertible {
     case windowNotFound(String)
     case pngWriteFailed(URL)
 
-    var description: String {
+    public var description: String {
         switch self {
         case .windowNotFound(let bundleID):
             "Ekranda \(bundleID) penceresi bulunamadı. PS Remote Play açık ve PS5'e bağlı mı?"
@@ -22,16 +22,20 @@ enum CaptureError: Error, CustomStringConvertible {
 }
 
 /// PS Remote Play penceresini ScreenCaptureKit ile yakalar.
-struct RemotePlayCapture {
-    let bundleID: String
+public struct RemotePlayCapture: Sendable {
+    public let bundleID: String
+
+    public init(bundleID: String) {
+        self.bundleID = bundleID
+    }
 
     /// Uygulamanın ekrandaki en büyük penceresi (küçük yardımcı pencereler elenir).
-    func findWindow() async throws -> SCWindow {
+    public func findWindow() async throws -> SCWindow {
         try await findWindowWithDisplayInfo().window
     }
 
     /// Pencere ve tam ekranda olup olmadığı (tam ekranda başlık çubuğu yoktur).
-    func findWindowWithDisplayInfo() async throws -> (window: SCWindow, fullscreen: Bool) {
+    public func findWindowWithDisplayInfo() async throws -> (window: SCWindow, fullscreen: Bool) {
         let content = try await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: true)
         let candidates = content.windows.filter {
             $0.owningApplication?.bundleIdentifier == bundleID && $0.frame.width >= 320 && $0.frame.height >= 180
@@ -44,7 +48,7 @@ struct RemotePlayCapture {
     }
 
     /// Pencerenin tek karesi, ekranın gerçek piksel çözünürlüğünde.
-    func captureFrame(of window: SCWindow) async throws -> CGImage {
+    public func captureFrame(of window: SCWindow) async throws -> CGImage {
         let filter = SCContentFilter(desktopIndependentWindow: window)
         let scale = CGFloat(filter.pointPixelScale)
         let config = SCStreamConfiguration()
@@ -63,7 +67,7 @@ struct RemotePlayCapture {
 }
 
 /// Görüntüyü küçültülmüş gri tonlamaya çevirip parlaklık istatistiği çıkarır.
-func frameStats(of image: CGImage) -> FrameStats {
+public func frameStats(of image: CGImage) -> FrameStats {
     let width = 192
     let height = max(1, Int(Double(width) * Double(image.height) / Double(max(image.width, 1))))
     var luma = [UInt8](repeating: 0, count: width * height)
@@ -83,7 +87,7 @@ func frameStats(of image: CGImage) -> FrameStats {
     return FrameStats.analyze(luma: luma)
 }
 
-func writePNG(_ image: CGImage, to url: URL) throws {
+public func writePNG(_ image: CGImage, to url: URL) throws {
     guard let destination = CGImageDestinationCreateWithURL(url as CFURL, UTType.png.identifier as CFString, 1, nil) else {
         throw CaptureError.pngWriteFailed(url)
     }
@@ -92,7 +96,7 @@ func writePNG(_ image: CGImage, to url: URL) throws {
 }
 
 /// Debug için: OCR kutularını görüntünün üzerine kırmızı çerçeve olarak çizer.
-func drawBoxes(on image: CGImage, boxes: [Rect]) -> CGImage? {
+public func drawBoxes(on image: CGImage, boxes: [Rect]) -> CGImage? {
     let width = image.width
     let height = image.height
     guard let context = CGContext(

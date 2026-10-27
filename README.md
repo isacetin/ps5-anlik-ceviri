@@ -414,15 +414,25 @@ Tüm Mac seçenekleri için: [mac/README.md](mac/README.md).
 │       └── BootReceiver.kt
 ├── mac/                         Mac aracı (Swift paketi); ayrıntılı başvuru: mac/README.md
 │   ├── Sources/PS5CeviriCore/   Saf mantık: geometri, blok birleştirme, stabilizasyon, çeviri, protokol
-│   └── Sources/ps5ceviri/       ScreenCaptureKit, Vision, DeepL, WebSocket, komut satırı
+│   ├── Sources/PS5CeviriMac/    Ekran okuma: ScreenCaptureKit akışı, Vision OCR, ScreenReader
+│   ├── Sources/CeviriBridge/    PS5CeviriMac'i Rust'a açan C ABI (statik kütüphane)
+│   └── Sources/ps5ceviri/       DeepL, WebSocket, TV bulma, komut satırı
 ├── desktop/                     Mac + Windows masaüstü uygulaması (Rust workspace, geliştiriliyor)
 │   ├── core/                    Platformdan bağımsız mantık: PS5CeviriCore'un Rust karşılığı
+│   ├── mac/                     Mac platform katmanı: CeviriBridge'i derleyip bağlar (build.rs)
+│   ├── cli/                     `ceviri` komut satırı aracı: iş hattını platform katmanıyla dener
 │   └── winprobe/                Windows'ta Remote Play yakalama + OCR test aracı (Faz 0)
 └── tools/ws_test.py             Mac olmadan TV'ye sahte mesaj gönderen test scripti
 ```
 
 `desktop/` iki işletim sistemi için yazılır: CI (`.github/workflows/desktop.yml`) her değişiklikte
-Rust kodunu macOS **ve** Windows'ta derleyip test eder.
+Rust kodunu macOS **ve** Windows'ta derleyip test eder. Mac'te ekran okuma, gerçek oyunda doğrulanmış
+Swift kodudur ve Rust'tan köprüyle çağrılır; Rust tarafı ana thread'i olay döngüsüne bırakıp okumayı
+ayrı bir thread'de yapar. Denemek için (Remote Play açıkken):
+
+```bash
+cd desktop && cargo run -p ceviri-cli -- read --count 5
+```
 
 **Unit testler:**
 

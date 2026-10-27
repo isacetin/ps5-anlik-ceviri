@@ -1,0 +1,15 @@
+[package]
+name = "ceviri-cli"
+description = "Masaüstü iş hattını uçtan uca deneyen komut satırı aracı (Mac + Windows)"
+edition.workspace = true
+version.workspace = true
+
+[[bin]]
+name = "ceviri"
+path = "src/main.rs"
+
+[dependencies]
+ceviri-core.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+ceviri-mac.workspace = true

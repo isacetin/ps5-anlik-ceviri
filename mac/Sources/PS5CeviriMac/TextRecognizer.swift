@@ -4,8 +4,10 @@ import PS5CeviriCore
 import Vision
 
 /// Apple Vision ile İngilizce metin satırlarını ve kutularını çıkarır.
-struct TextRecognizer {
-    func recognize(_ image: CGImage) async throws -> [TextLine] {
+public struct TextRecognizer: Sendable {
+    public init() {}
+
+    public func recognize(_ image: CGImage) async throws -> [TextLine] {
         var request = RecognizeTextRequest()
         request.recognitionLevel = .accurate
         request.recognitionLanguages = [Locale.Language(identifier: "en-US")]
