@@ -18,6 +18,7 @@ Kullanım:
     --out KLASÖR     Çıktı klasörü (varsayılan ./frames)
     --bundle ID      Yakalanacak uygulama (varsayılan \(remotePlayBundleID))
   ps5ceviri translate "METİN"               DeepL anahtarını tek bir metinle dener (önbelleği kullanmaz)
+  ps5ceviri ocr DOSYA.png...                Görüntü dosyalarında Vision OCR çalıştırır (winprobe ile karşılaştırma için)
   ps5ceviri run [seçenekler]                Remote Play'i okuyup Türkçe çeviriyi TV'ye gönderir
     --tv HOST[:PORT] TV adresi (verilmezse yerel ağda NSD ile aranır; port varsayılan 8765)
     --dry-run        DeepL'e gitmeden İngilizce metni gönderir (hizalama testi, kota harcamaz)
@@ -219,6 +220,26 @@ func translateOnce(args: [String]) async throws {
     print("\(text)  →  \(translated.first ?? "")")
 }
 
+/// Çıktı biçimi Windows'taki `winprobe ocr` ile aynıdır; iki OCR yan yana karşılaştırılabilsin diye.
+func ocrFiles(args: [String]) async throws {
+    let paths = Array(args.dropFirst())
+    guard !paths.isEmpty else { throw CommandError("Kullanım: ps5ceviri ocr DOSYA.png ...") }
+    let recognizer = TextRecognizer()
+    let clock = ContinuousClock()
+    for path in paths {
+        guard let source = CGImageSourceCreateWithURL(URL(fileURLWithPath: path) as CFURL, nil),
+              let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
+            throw CommandError("Görüntü açılamadı: \(path)")
+        }
+        let start = clock.now
+        let lines = try await recognizer.recognize(image)
+        print("\(path): \(image.width)x\(image.height)  OCR \(milliseconds(clock.now - start)) ms, \(lines.count) satır")
+        for line in lines {
+            print(String(format: "    [x=%.3f y=%.3f w=%.3f h=%.3f] \"%@\"", line.box.x, line.box.y, line.box.width, line.box.height, line.text))
+        }
+    }
+}
+
 struct CommandError: Error, CustomStringConvertible {
     let description: String
     init(_ description: String) { self.description = description }
@@ -231,6 +252,7 @@ do {
     case "capture": try await capture(args: args)
     case "run": try await run(args: args)
     case "translate": try await translateOnce(args: args)
+    case "ocr": try await ocrFiles(args: args)
     default:
         print(usage)
         exit(args.isEmpty ? 0 : 1)

@@ -1,0 +1,42 @@
+# Masaüstü tarafı her değişiklikte hem macOS'ta hem Windows'ta derlenip test edilir; Windows'a
+# özel kod (winprobe) Windows runner'ında MSVC ile gerçekten derlenir.
+name: Masaüstü
+
+on:
+  push:
+    branches: [main]
+    paths: ["desktop/**", "mac/**", ".github/workflows/desktop.yml"]
+  pull_request:
+    paths: ["desktop/**", "mac/**", ".github/workflows/desktop.yml"]
+
+jobs:
+  rust:
+    name: Rust (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test --workspace
+
+  swift:
+    name: Swift (macOS)
+    runs-on: macos-15
+    defaults:
+      run:
+        working-directory: mac
+    steps:
+      - uses: actions/checkout@v4
+      - run: swift test

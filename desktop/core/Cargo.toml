@@ -1,0 +1,12 @@
+[package]
+name = "ceviri-core"
+description = "Platformdan bağımsız çeviri mantığı: blok birleştirme, stabilizasyon, çeviri önbelleği, TV protokolü"
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+dirs = "6"
+serde.workspace = true
+serde_json.workspace = true
+unicode-normalization = "0.1"
+whatlang = "0.16"

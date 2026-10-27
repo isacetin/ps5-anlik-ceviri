@@ -415,8 +415,14 @@ Tüm Mac seçenekleri için: [mac/README.md](mac/README.md).
 ├── mac/                         Mac aracı (Swift paketi); ayrıntılı başvuru: mac/README.md
 │   ├── Sources/PS5CeviriCore/   Saf mantık: geometri, blok birleştirme, stabilizasyon, çeviri, protokol
 │   └── Sources/ps5ceviri/       ScreenCaptureKit, Vision, DeepL, WebSocket, komut satırı
+├── desktop/                     Mac + Windows masaüstü uygulaması (Rust workspace, geliştiriliyor)
+│   ├── core/                    Platformdan bağımsız mantık: PS5CeviriCore'un Rust karşılığı
+│   └── winprobe/                Windows'ta Remote Play yakalama + OCR test aracı (Faz 0)
 └── tools/ws_test.py             Mac olmadan TV'ye sahte mesaj gönderen test scripti
 ```
+
+`desktop/` iki işletim sistemi için yazılır: CI (`.github/workflows/desktop.yml`) her değişiklikte
+Rust kodunu macOS **ve** Windows'ta derleyip test eder.
 
 **Unit testler:**
 
@@ -426,6 +432,10 @@ Tüm Mac seçenekleri için: [mac/README.md](mac/README.md).
 
 ```bash
 cd mac && swift test
+```
+
+```bash
+cd desktop && cargo test --workspace
 ```
 
 TV tarafında 31 test bulunur: JSON parse, piksel dönüşümü, 3 sn timeout ve heartbeat (sanal zamanla),

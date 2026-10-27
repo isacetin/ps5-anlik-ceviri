@@ -1,0 +1,53 @@
+winprobe — Windows'ta Remote Play yakalama + OCR testi (Faz 0)
+================================================================
+
+Bu araç iki şeyi ölçer:
+  1. Windows, PS Remote Play penceresinin görüntüsünü alabiliyor mu (siyah kare vermeden)?
+  2. Windows'un yerleşik yazı tanıması (OCR) oyundaki İngilizce yazıları ne kadar iyi okuyor?
+Hiçbir şey kurmaz, ayar değiştirmez, internete bağlanmaz.
+
+HAZIRLIK
+--------
+1. Windows PC'ye PS Remote Play'i kur: https://www.playstation.com/tr-tr/remote-play/
+2. Mac'te Remote Play açıksa KAPAT (PS5 aynı anda tek Remote Play bağlantısı kabul eder).
+3. Windows'ta Remote Play'i aç, PSN hesabınla giriş yap, PS5'e bağlan.
+4. PS5'te İngilizce yazı olan bir ekran aç (ör. It Takes Two ana menüsü ya da bir diyalog).
+   Kumanda bağlamak gerekmiyor; ekranın açık durması yeterli.
+5. Remote Play penceresini büyük tut (ekranın büyük kısmını kaplasın). Simge durumuna küçültme.
+
+ÇALIŞTIRMA
+----------
+1. winprobe.exe'yi bir klasöre koy (ör. Masaüstü\winprobe) ve çift tıkla.
+2. "Windows bilgisayarınızı korudu" uyarısı çıkarsa: "Ek bilgi" > "Yine de çalıştır".
+   (Araç imzasız olduğu için çıkar; normal.)
+3. Araç yaklaşık 10-20 saniye kare alır ve okur, sonuçları ekrana yazar.
+4. Sonra "başka bir modda tekrar denemek" ister:
+   Remote Play'i TAM EKRAN yap, sonra Alt+Tab ile siyah komut penceresine dönüp Enter'a bas.
+   (İstersen üçüncü turda pencereyi küçük boyutta dene.) Bitirmek için q yazıp Enter.
+5. Exe'nin yanında "winprobe-sonuc-1" klasörü oluşur. Bu klasörü sağ tık > "Sıkıştırılmış klasöre
+   gönder" ile zip'le ve bana gönder.
+
+Klasörde neler var?
+  rapor.txt               Ekranda görünen her şey (sistem, süreler, okunan yazılar)
+  tN_pencere_XX.png       Yakalanan pencerenin tamamı
+  tN_video_XX.png         OCR'a verilen 16:9 oyun alanı (Mac'teki Vision ile karşılaştırılacak)
+  tN_ocr_XX.png           Bulunan yazıların kırmızı kutularla işaretlendiği hali
+
+OLASI DURUMLAR
+--------------
+* "İngilizce OCR dili kurulu değil" uyarısı:
+  Türkçe Windows'ta sık görülür. Ayarlar > Zaman ve dil > Dil ve bölge > Dil ekle >
+  English (United States) ekle (sadece "Temel yazma" + "Optik karakter tanıma" yeterli,
+  görüntüleme dili yapmana gerek yok). Sonra aracı yeniden çalıştır.
+  Bu uyarıyla bile yakalama testi yapılır; o sonucu da gönder.
+* "Remote Play penceresi bulunamadı": Ekrandaki pencere listesi yazılır. Remote Play açıksa
+  komut isteminde şu şekilde elle seçilebilir:  winprobe.exe --pencere "Remote Play"
+* Tüm kareler "SİYAH!": Bu da önemli bir sonuç (Remote Play görüntüsü korumalı demek).
+  Yine de klasörü gönder.
+
+İLERİ SEÇENEKLER (komut isteminden)
+-----------------------------------
+  winprobe.exe --kare 20 --aralik 0.5     Daha fazla kare
+  winprobe.exe --olcek 2                  OCR'dan önce görüntüyü 2 kat büyüt (küçük yazılar için)
+  winprobe.exe windows                    Pencereleri listele
+  winprobe.exe ocr resim.png              Bir görüntü dosyasında OCR çalıştır
