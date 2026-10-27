@@ -19,11 +19,14 @@ pub fn auth_header(key: &str) -> String {
     format!("DeepL-Auth-Key {key}")
 }
 
+/// Metinler XML olarak gider: `terms::Terms::protect` ile kaçışlanmış olmalı; `<x>` içi çevrilmez.
 #[derive(Serialize)]
 struct Request<'a> {
     text: &'a [String],
     source_lang: &'static str,
     target_lang: &'static str,
+    tag_handling: &'static str,
+    ignore_tags: [&'static str; 1],
 }
 
 #[derive(Deserialize)]
@@ -37,7 +40,8 @@ struct Translation {
 }
 
 pub fn request_body(texts: &[String]) -> String {
-    serde_json::to_string(&Request { text: texts, source_lang: "EN", target_lang: "TR" }).expect("istek serileştirilebilir")
+    serde_json::to_string(&Request { text: texts, source_lang: "EN", target_lang: "TR", tag_handling: "xml", ignore_tags: ["x"] })
+        .expect("istek serileştirilebilir")
 }
 
 pub fn parse_response(body: &str) -> Result<Vec<String>, TranslationError> {
@@ -67,6 +71,8 @@ mod tests {
         assert_eq!(body["text"], serde_json::json!(["The gate is locked."]));
         assert_eq!(body["source_lang"], "EN");
         assert_eq!(body["target_lang"], "TR");
+        assert_eq!(body["tag_handling"], "xml");
+        assert_eq!(body["ignore_tags"], serde_json::json!(["x"]));
 
         let response = r#"{"translations":[{"detected_source_language":"EN","text":"Kapı kilitli."}]}"#;
         assert_eq!(parse_response(response), Ok(vec!["Kapı kilitli.".to_string()]));

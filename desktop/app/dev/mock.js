@@ -1,7 +1,7 @@
 // Tarayıcıda arayüz önizlemesi: Tauri köprüsü yerine geçer ve "Başlat"a basılınca gerçek
 // formatta örnek olaylar yayınlar. Uygulamaya dahil edilmez (ui/ dışında).
 const handlers = [];
-const status = { running: false, hasDeeplKey: true, settings: { output: "both", tvAddress: "", translate: true, fps: 2, window: "" } };
+const status = { running: false, hasDeeplKey: true, settings: { output: "both", tvAddress: "", translate: true, fps: 2, window: "", protectedTerms: ["It Takes Two", "May", "Cody"] } };
 window.__TAURI__ = {
   core: {
     invoke: async (cmd) => {

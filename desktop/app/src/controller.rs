@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use ceviri_core::{storage, OverlayBlock, ScreenReader};
+use ceviri_core::{storage, OverlayBlock, ScreenReader, Terms};
 use ceviri_engine::pipeline::Backend;
 use ceviri_engine::{discovery, tv_client, Config, Event, Pipeline, TvClient};
 use serde::{Deserialize, Serialize};
@@ -45,11 +45,13 @@ pub struct Settings {
     pub fps: f64,
     /// Boşsa PS Remote Play. Mac'te bundle ID, Windows'ta başlıkta/exe adında geçen metin.
     pub window: String,
+    /// Çevrilmeyecek adlar (oyun, karakter); PlayStation, PS5 vb. her zaman korunur.
+    pub protected_terms: Vec<String>,
 }
 
 impl Default for Settings {
     fn default() -> Settings {
-        Settings { output: Output::Tv, tv_address: String::new(), translate: true, fps: 2.0, window: String::new() }
+        Settings { output: Output::Tv, tv_address: String::new(), translate: true, fps: 2.0, window: String::new(), protected_terms: Vec::new() }
     }
 }
 
@@ -196,7 +198,7 @@ impl Inner {
             return Ok(());
         }
 
-        let mut config = Config { fps: settings.fps, ..Config::default() };
+        let mut config = Config { fps: settings.fps, terms: Terms::new(&settings.protected_terms), ..Config::default() };
         if settings.translate {
             config.backend = Some((self.make_backend)()?);
             config.cache_path = self.cache_path.clone();

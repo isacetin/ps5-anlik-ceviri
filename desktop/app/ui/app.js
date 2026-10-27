@@ -70,6 +70,7 @@ function renderSettings(settings) {
   }
   $("fps").value = String(Math.round(settings.fps));
   $("window").value = settings.window;
+  $("protected-terms").value = settings.protectedTerms.join("\n");
   $("mode-value").textContent = settings.translate ? "Türkçe (DeepL)" : "Çevirisiz test";
   setLevel("mode-dot", settings.translate ? "ok" : "warn");
   if (!running) $("tv-value").textContent = usesTv(settings.output) ? "Bağlı değil" : "Kullanılmıyor";
@@ -82,6 +83,7 @@ function readSettings() {
     translate: document.querySelector('input[name="mode"]:checked')?.value !== "test",
     fps: Number($("fps").value),
     window: $("window").value.trim(),
+    protectedTerms: $("protected-terms").value.split("\n").map((t) => t.trim()).filter(Boolean),
   };
 }
 

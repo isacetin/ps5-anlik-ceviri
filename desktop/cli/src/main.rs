@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use ceviri_core::{block_merger, storage, ReadError, Stabilizer};
+use ceviri_core::{block_merger, storage, terms, ReadError, Stabilizer, Terms};
 use ceviri_engine::{discovery, tv_client, Config, DeepLClient, Event, Pipeline, TvClient};
 use ceviri_platform as platform;
 
@@ -15,6 +15,7 @@ Kullanım:
     --tv HOST[:PORT]             TV adresi (verilmezse yerel ağda aranır; port varsayılan 8765)
     --dry-run                    DeepL'e gitmeden İngilizce metni gönderir (hizalama testi, kota harcamaz)
     --fps N                      Saniyedeki tur (varsayılan 2, en az 1)
+    --keep \"AD1,AD2\"              Çevrilmeyecek adlar (oyun, karakter); PlayStation, PS5 vb. hep korunur
     --verbose                    Her turun süresini yazar
     --once                       Tek tur çalışıp çıkar
   ceviri read [seçenekler]       TV'siz: OCR satırlarını ve sabit blokları yazar
@@ -64,7 +65,8 @@ fn run(args: &[String]) -> Result<(), String> {
     let fps: f64 = option(args, "--fps").and_then(|v| v.parse().ok()).unwrap_or(2.0f64).max(1.0);
     let title_bar = option(args, "--titlebar").and_then(|v| v.parse().ok());
 
-    let mut config = Config { fps, dump_dir: dump_dir(args)?, once: flag(args, "--once"), ..Config::default() };
+    let keep: Vec<String> = option(args, "--keep").map(|v| v.split(',').map(str::to_string).collect()).unwrap_or_default();
+    let mut config = Config { fps, dump_dir: dump_dir(args)?, once: flag(args, "--once"), terms: Terms::new(&keep), ..Config::default() };
     if !dry_run {
         let key = storage::deepl_key().ok_or_else(|| {
             let path = storage::deepl_key_path().map(|p| p.display().to_string()).unwrap_or_default();
@@ -164,8 +166,9 @@ fn translate(args: &[String]) -> Result<(), String> {
     }
     let key = storage::deepl_key().ok_or("DeepL anahtarı bulunamadı")?;
     let text = args[1..].join(" ");
-    let translated = DeepLClient::new(key).translate(std::slice::from_ref(&text)).map_err(|e| format!("DeepL hatası: {e}"))?;
-    println!("{text}  →  {}", translated.first().map(String::as_str).unwrap_or(""));
+    let protected = Terms::new(&[]).protect(&text);
+    let translated = DeepLClient::new(key).translate(&[protected]).map_err(|e| format!("DeepL hatası: {e}"))?;
+    println!("{text}  →  {}", terms::unprotect(translated.first().map(String::as_str).unwrap_or("")));
     Ok(())
 }
 

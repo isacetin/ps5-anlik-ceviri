@@ -8,7 +8,7 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use ceviri_core::{block_merger, language, storage, translator, OverlayBlock, ReadError, Rect, ScreenReader, StableBlock, Stabilizer, TranslationError, Translator};
+use ceviri_core::{block_merger, language, storage, terms, translator, OverlayBlock, ReadError, Rect, ScreenReader, StableBlock, Stabilizer, Terms, TranslationError, Translator};
 
 use crate::tv_client::TvClient;
 
@@ -27,11 +27,13 @@ pub struct Config {
     pub dump_dir: Option<PathBuf>,
     /// Tek tur çalışıp ekranı temizler (hizalama testi).
     pub once: bool,
+    /// Çevrilmeyecek adlar (oyun, karakter, marka).
+    pub terms: Terms,
 }
 
 impl Default for Config {
     fn default() -> Config {
-        Config { fps: 2.0, backend: None, cache: Default::default(), cache_path: None, dump_dir: None, once: false }
+        Config { fps: 2.0, backend: None, cache: Default::default(), cache_path: None, dump_dir: None, once: false, terms: Terms::new(&[]) }
     }
 }
 
@@ -122,13 +124,22 @@ impl Pipeline {
                     let stable = stabilizer.update(&merged, elapsed());
                     blocks = match &self.config.backend {
                         Some(backend) => {
-                            let english: Vec<&StableBlock> = stable.iter().filter(|b| !language::looks_turkish(&b.text)).collect();
-                            let texts: Vec<String> = english.iter().map(|b| b.text.clone()).collect();
-                            let lookup = translator.lock().unwrap().lookup(&texts, elapsed());
+                            // Türkçe (PS5 arayüzü) ve yalnızca addan oluşan metin çevrilmez, üstüne de
+                            // çizilmez: orijinali görünür kalır.
+                            let terms = &self.config.terms;
+                            let english: Vec<&StableBlock> =
+                                stable.iter().filter(|b| !language::looks_turkish(&b.text) && !terms.is_only_terms(&b.text)).collect();
+                            // Önbellek ve DeepL işaretli hali görür; ad listesi değişince eski çeviri kullanılmaz.
+                            let keys: Vec<String> = english.iter().map(|b| terms.protect(&b.text)).collect();
+                            let lookup = translator.lock().unwrap().lookup(&keys, elapsed());
                             if !lookup.to_fetch.is_empty() {
                                 spawn_fetch(&translator, lookup.to_fetch, elapsed(), backend.clone(), self.config.cache_path.clone(), failures_tx.clone());
                             }
-                            english.iter().filter_map(|b| lookup.found.get(&b.text).map(|t| overlay_block(b, t))).collect()
+                            english
+                                .iter()
+                                .zip(&keys)
+                                .filter_map(|(b, key)| lookup.found.get(key).map(|t| overlay_block(b, &terms::unprotect(t))))
+                                .collect()
                         }
                         None => stable.iter().map(|b| overlay_block(b, &b.text)).collect(),
                     };
@@ -338,6 +349,26 @@ mod tests {
         assert_eq!(texts(shown), ["TR(Play Local)"]);
         // PS5'in Türkçe arayüz yazısı çeviriye hiç gönderilmez; İngilizce metin bir kez istenir.
         assert_eq!(*asked.lock().unwrap(), ["Play Local"]);
+    }
+
+    #[test]
+    fn adlar_korunur_ve_yalnizca_ad_olan_metin_gonderilmez() {
+        let (address, messages) = fake_tv(usize::MAX);
+        let asked = Arc::new(Mutex::new(Vec::<String>::new()));
+        let log = asked.clone();
+        // DeepL gibi: <x> içine dokunmaz, gerisini "çevirir".
+        let backend: Backend = Arc::new(move |texts: &[String]| {
+            log.lock().unwrap().extend(texts.iter().cloned());
+            Ok(texts.iter().map(|t| t.replace("Continue", "Devam et")).collect())
+        });
+        let config = Config { backend: Some(backend), terms: Terms::new(&["It Takes Two".into()]), ..fast() };
+        let reader = FakeReader { lines: vec![line("Continue It Takes Two", 0.3), line("It Takes Two", 0.6)], missing: 0, calls: 0 };
+
+        let (received, _) = run_until(reader, config, &messages, address, |m| !m.blocks.is_empty());
+
+        let shown = received.iter().find(|m| !m.blocks.is_empty()).unwrap();
+        assert_eq!(texts(shown), ["Devam et It Takes Two"]);
+        assert_eq!(*asked.lock().unwrap(), ["Continue <x>It Takes Two</x>"]);
     }
 
     #[test]

@@ -13,6 +13,7 @@ pub mod protocol;
 pub mod screen;
 pub mod stabilizer;
 pub mod storage;
+pub mod terms;
 pub mod translator;
 
 pub use block_merger::{MergedBlock, TextLine};
@@ -21,4 +22,5 @@ pub use geometry::Rect;
 pub use protocol::{OverlayBlock, OverlayMessage};
 pub use screen::{ReadError, Reading, ScreenReader};
 pub use stabilizer::{StableBlock, Stabilizer};
+pub use terms::Terms;
 pub use translator::{TranslationError, Translator};
