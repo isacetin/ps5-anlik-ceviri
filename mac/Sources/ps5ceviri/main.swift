@@ -1,7 +1,8 @@
 import AppKit
 import Foundation
 import PS5CeviriCore
-import ScreenCaptureKit
+// macOS 15 SDK'sında SCWindow henüz Sendable değil; Swift 6 bunu hata sayar (CI, Xcode 16).
+@preconcurrency import ScreenCaptureKit
 
 // Komut satırı aracında pencere sunucusu bağlantısı kendiliğinden açılmaz; ScreenCaptureKit
 // onsuz CGS_REQUIRE_INIT assert'üyle çöker.
