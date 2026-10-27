@@ -359,11 +359,13 @@ mod tests {
     #[test]
     fn tvye_ulasilamazsa_bir_kez_bildirilir_ve_durdurulabilir() {
         let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
-        let mut pipeline = Pipeline::new(
-            Box::new(FakeReader { lines: menu(), missing: 0, calls: 0 }),
-            TvClient::new(format!("127.0.0.1:{port}")),
-            fast(),
-        );
+        let address = format!("127.0.0.1:{port}");
+        // Kapalı porta tek bağlanma denemesinin süresi işletim sistemine göre değişir
+        // (macOS: anında, Windows: ~2 sn). Durdurma en fazla süren bir denemeyi beklemeli.
+        let attempt_started = Instant::now();
+        assert!(TvClient::new(address.clone()).send(&[]).is_err());
+        let one_attempt = attempt_started.elapsed();
+        let mut pipeline = Pipeline::new(Box::new(FakeReader { lines: menu(), missing: 0, calls: 0 }), TvClient::new(address), fast());
         let stop = pipeline.stop_handle();
         let worker = thread::spawn(move || {
             let mut events = Vec::new();
@@ -375,7 +377,9 @@ mod tests {
         stop.store(true, Ordering::Relaxed);
         let events = worker.join().unwrap();
 
-        assert!(stopped_at.elapsed() < Duration::from_secs(1), "durdurma 2 sn'lik beklemeyi kesmeli");
+        // 2 sn'lik bekleme kesilmeli ve kapanışta yeniden bağlanılmamalı.
+        let limit = one_attempt + Duration::from_millis(700);
+        assert!(stopped_at.elapsed() < limit, "durdurma {:?} sürdü, sınır {limit:?}", stopped_at.elapsed());
         assert_eq!(events.iter().filter(|e| matches!(e, Event::TvUnreachable(_))).count(), 1);
     }
 }

@@ -68,8 +68,13 @@ impl TvClient {
         Err(format!("WebSocket gönderilemedi ({}): {last_error}", self.url()))
     }
 
-    /// Ekranı temizler ve bağlantıyı kapatır.
+    /// Ekranı temizler ve bağlantıyı kapatır. Bağlı değilse yalnızca temizlemek için yeniden
+    /// bağlanılmaz: TV mesaj almayınca 3 sn'de kendisi temizler, kapanış da gecikmez (Windows'ta
+    /// kapalı porta bağlanma denemesi ~2 sn sürer).
     pub fn close(&mut self) {
+        if self.socket.is_none() {
+            return;
+        }
         let _ = self.send(&[]);
         if let Some(mut socket) = self.socket.take() {
             let _ = socket.close(None);
@@ -193,6 +198,18 @@ pub(crate) mod tests {
             }
         }
         panic!("yeniden bağlanıldıktan sonra mesaj gelmedi");
+    }
+
+    #[test]
+    fn bagli_degilken_kapatmak_yeniden_baglanmaz() {
+        // Windows'ta kapalı porta bağlanma denemesi ~2 sn sürer; kapanış bunu beklememeli.
+        let port = TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+        let mut client = TvClient::new(format!("127.0.0.1:{port}"));
+
+        let started = std::time::Instant::now();
+        client.close();
+
+        assert!(started.elapsed() < Duration::from_millis(200));
     }
 
     #[test]
