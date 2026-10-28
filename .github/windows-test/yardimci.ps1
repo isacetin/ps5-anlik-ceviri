@@ -10,6 +10,27 @@ public static class Girdi {
     [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
     [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hwnd, int command);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetWindowText(IntPtr hwnd, StringBuilder text, int count);
+    [DllImport("user32.dll")] public static extern IntPtr GetDC(IntPtr hwnd);
+    [DllImport("user32.dll")] public static extern int ReleaseDC(IntPtr hwnd, IntPtr dc);
+    [DllImport("gdi32.dll")] public static extern IntPtr CreateCompatibleDC(IntPtr dc);
+    [DllImport("gdi32.dll")] public static extern IntPtr CreateCompatibleBitmap(IntPtr dc, int w, int h);
+    [DllImport("gdi32.dll")] public static extern IntPtr SelectObject(IntPtr dc, IntPtr obj);
+    [DllImport("gdi32.dll")] public static extern bool BitBlt(IntPtr dst, int x, int y, int w, int h, IntPtr src, int sx, int sy, uint rop);
+    [DllImport("gdi32.dll")] public static extern bool DeleteObject(IntPtr obj);
+    [DllImport("gdi32.dll")] public static extern bool DeleteDC(IntPtr dc);
+    // SRCCOPY | CAPTUREBLT: katmanli (seffaf) pencereler de goruntuye girer.
+    // Cagiran bitmap'i kaydedip DeleteObject ile birakir.
+    public static IntPtr CaptureScreen(int w, int h) {
+        IntPtr screen = GetDC(IntPtr.Zero);
+        IntPtr memory = CreateCompatibleDC(screen);
+        IntPtr bitmap = CreateCompatibleBitmap(screen, w, h);
+        IntPtr old = SelectObject(memory, bitmap);
+        BitBlt(memory, 0, 0, w, h, screen, 0, 0, 0x00CC0020 | 0x40000000);
+        SelectObject(memory, old);
+        DeleteDC(memory);
+        ReleaseDC(IntPtr.Zero, screen);
+        return bitmap;
+    }
     public static string ForegroundTitle() {
         var text = new StringBuilder(512);
         GetWindowText(GetForegroundWindow(), text, text.Capacity);
@@ -20,14 +41,11 @@ public static class Girdi {
 
 function Save-Screen([string]$path) {
     $bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
-    $bitmap = New-Object System.Drawing.Bitmap $bounds.Width, $bounds.Height
-    $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
-    # CaptureBlt: katmanli (seffaf) pencereler de goruntuye girsin.
-    $op = [System.Drawing.CopyPixelOperation]::SourceCopy -bor [System.Drawing.CopyPixelOperation]::CaptureBlt
-    $graphics.CopyFromScreen($bounds.Location, [System.Drawing.Point]::Empty, $bounds.Size, $op)
-    $bitmap.Save($path, [System.Drawing.Imaging.ImageFormat]::Png)
-    $graphics.Dispose()
-    $bitmap.Dispose()
+    $hbitmap = [Girdi]::CaptureScreen($bounds.Width, $bounds.Height)
+    $image = [System.Drawing.Image]::FromHbitmap($hbitmap)
+    $image.Save($path, [System.Drawing.Imaging.ImageFormat]::Png)
+    $image.Dispose()
+    [Girdi]::DeleteObject($hbitmap) | Out-Null
     Write-Host "Ekran goruntusu: $path"
 }
 
