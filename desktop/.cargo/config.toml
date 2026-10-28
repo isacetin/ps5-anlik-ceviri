@@ -3,6 +3,12 @@
 linker = "x86_64-w64-mingw32-gcc"
 rustflags = ["-C", "target-feature=+crt-static"]
 
+# Windows (MSVC): yerel çeviri motoru CTranslate2 statik CRT (/MT) ile derlenir; Rust ve C++ köprü
+# kodu da aynısıyla derlenmezse bağlayıcı LNK2038 verir. Yan faydası: kullanıcının Visual C++
+# Redistributable kurması gerekmez.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
+
 # Swift köprüsü macOS 15 için derlenir; Rust tarafı da aynı hedefle bağlanmalı.
 [env]
 MACOSX_DEPLOYMENT_TARGET = "15.0"
