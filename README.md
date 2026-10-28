@@ -47,8 +47,8 @@ indirin:
 
 | Sistem | Dosya | Boyut |
 |---|---|---|
-| Mac (Apple Silicon) | `AnlikCeviri_0.3.0_mac_aarch64.dmg` | ~14 MB |
-| Windows (64 bit) | `AnlikCeviri_0.3.0_windows_x64-setup.exe` | ~17 MB |
+| Mac (Apple Silicon) | `AnlikCeviri_0.3.1_mac_aarch64.dmg` | ~14 MB |
+| Windows (64 bit) | `AnlikCeviri_0.3.1_windows_x64-setup.exe` | ~17 MB |
 
 TV uygulaması dosyalara gömülüdür; ayrıca indirmeniz gerekmez.
 
@@ -138,7 +138,7 @@ devam eder (yalnızca güncellemek için yeniden açmanız gerekir).
 | Yazılar yanlış okunuyor | Remote Play penceresini büyütün ya da tam ekran yapın. |
 | TV'de kutular yazının üstüne tam oturmuyor | TV'nin resim formatını "Tam Piksel" ya da "Just Scan" yapın. |
 | Oyun ya da karakter adı çevriliyor | Ayarlar → **Çevrilmeyecek adlar**'a ekleyin. |
-| PC oyununda "Oyun görüntüsü alınamıyor (kare siyah)" | Oyunun ekran modunu "Kenarlıksız pencere" ya da "Pencere" yapın. |
+| PC oyununda "Oyun görüntüsü alınamıyor (kare siyah)" | Uygulama önce pencereyi, siyah gelirse ekranın tamamını okumayı dener; ikisi de siyahsa oyunun ekran modunu "Kenarlıksız pencere" (Fullscreen Borderless) ya da "Pencere" yapın. |
 | PC oyunu listede yok | Oyun açık ve simge durumunda değil mi? Listedeki **Yenile**'ye basın. |
 | PC oyununda ekran yazıyla doluyor | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>R</kbd> ile yalnızca altyazı bandını seçin. |
 | "DeepL: kota doldu" | Aylık 500.000 karakter bitti; yeni ayda açılır. Bu arada Ayarlar'dan yerel modele geçebilirsiniz. |

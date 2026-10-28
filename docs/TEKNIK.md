@@ -240,7 +240,13 @@ olur. PC oyununda:
   olduğu için overlay de yalnızca bölgeyi kaplar.
 - Blok birleştirme okunan alanın gerçek en-boy oranını kullanır (21:9 monitör, ince altyazı bandı).
 - Çıkış her zaman ekran overlay'idir; TV aranmaz.
-- 20 tur üst üste siyah kare gelirse (özel tam ekran) kullanıcı "Kenarlıksız pencere"ye yönlendirilir.
+- Pencere yakalaması 4 tur (~2 sn) siyah gelirse (ör. Call of Duty "Fullscreen Extended Window")
+  oyunun bulunduğu monitör yakalanır ve istemci alanı oradan kesilir. Bu modda uygulamanın bütün
+  pencereleri `WDA_EXCLUDEFROMCAPTURE` ile yakalamadan çıkarılır (overlay kendi çevirisini yeniden
+  okumasın; ana pencere oyunun üstündeyse okunmasın), okuyucu kapanınca geri alınır.
+  `CEVIRI_YAKALAMA=ekran` baştan monitörü yakalatır.
+- Monitör yakalamada da 20 tur üst üste siyah kare gelirse kullanıcı "Kenarlıksız pencere"ye
+  yönlendirilir; mesaj yakalanan pencerenin başlığını, exe adını ve boyutunu da söyler.
 - Global kısayollar (`app/src/shortcuts.rs`, `tauri-plugin-global-shortcut`) yalnızca PC oyunu
   okunurken kayıtlıdır: <kbd>Ctrl+Shift+T</kbd> overlay'i gizler/gösterir,
   <kbd>Ctrl+Shift+R</kbd> oyunun istemci alanını kaplayan bölge seçme penceresini açar
