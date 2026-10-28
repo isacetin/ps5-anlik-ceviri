@@ -1,6 +1,6 @@
 //! Uygulamanın Tauri'den bağımsız çekirdeği: ayarlar, başlat/durdur, arayüze giden olaylar.
-//! Okuyucu ve çeviri arka ucu dışarıdan verilir; gerçekte platform okuyucusu ve DeepL,
-//! testlerde sahteleri.
+//! Okuyucu ve çeviri arka ucu dışarıdan verilir; gerçekte platform okuyucusu ve yerel model ya da
+//! DeepL, testlerde sahteleri.
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -34,6 +34,26 @@ impl Output {
     }
 }
 
+/// Çeviriyi kim yapar.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Engine {
+    /// Bu bilgisayarda çalışan Opus-MT modeli: çevrimdışı, ücretsiz, cümle başına ~0,1 sn.
+    #[default]
+    Local,
+    /// DeepL API: en iyi kalite, anahtar ve internet gerekir.
+    Deepl,
+}
+
+impl Engine {
+    pub fn label(self) -> &'static str {
+        match self {
+            Engine::Local => "yerel model",
+            Engine::Deepl => "DeepL",
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct Settings {
@@ -42,6 +62,7 @@ pub struct Settings {
     pub tv_address: String,
     /// `false`: çevirisiz test modu (İngilizce metin olduğu gibi gider, kota harcamaz).
     pub translate: bool,
+    pub engine: Engine,
     pub fps: f64,
     /// Boşsa PS Remote Play. Mac'te bundle ID, Windows'ta başlıkta/exe adında geçen metin.
     pub window: String,
@@ -53,16 +74,36 @@ pub struct Settings {
 
 impl Default for Settings {
     fn default() -> Settings {
-        Settings { output: Output::Tv, tv_address: String::new(), translate: true, fps: 2.0, window: String::new(), protected_terms: Vec::new(), setup_done: false }
+        Settings {
+            output: Output::Tv,
+            tv_address: String::new(),
+            translate: true,
+            engine: Engine::Local,
+            fps: 2.0,
+            window: String::new(),
+            protected_terms: Vec::new(),
+            setup_done: false,
+        }
     }
 }
 
 impl Settings {
     pub fn load() -> Settings {
-        storage::settings_path()
-            .and_then(|path| std::fs::read_to_string(path).ok())
-            .and_then(|json| serde_json::from_str(&json).ok())
-            .unwrap_or_default()
+        let json = storage::settings_path().and_then(|path| std::fs::read_to_string(path).ok());
+        Settings::from_json(json.as_deref(), storage::deepl_key().is_some())
+    }
+
+    /// Yerel model eklenmeden önce kaydedilmiş ayarlarda `engine` yoktur: DeepL anahtarı olan
+    /// kullanıcı, alıştığı DeepL'de kalır.
+    fn from_json(json: Option<&str>, has_deepl_key: bool) -> Settings {
+        let Some(value) = json.and_then(|json| serde_json::from_str::<serde_json::Value>(json).ok()) else {
+            return Settings::default();
+        };
+        let mut settings: Settings = serde_json::from_value(value.clone()).unwrap_or_default();
+        if value.get("engine").is_none() && has_deepl_key {
+            settings.engine = Engine::Deepl;
+        }
+        settings
     }
 
     pub fn save(&self) -> Result<(), String> {
@@ -100,8 +141,16 @@ pub struct ScreenRect {
 
 pub type EventSink = Arc<dyn Fn(UiEvent) + Send + Sync>;
 pub type ReaderFactory = Arc<dyn Fn(&Settings) -> Result<Box<dyn ScreenReader>, String> + Send + Sync>;
-/// Çeviri arka ucunu kurar (gerçekte DeepL anahtarını okur); anahtar yoksa hata.
-pub type BackendFactory = Arc<dyn Fn() -> Result<Backend, String> + Send + Sync>;
+/// Çeviri arka ucunu kurar (yerel modeli yükler ya da DeepL anahtarını okur); model ya da anahtar
+/// yoksa hata.
+pub type BackendFactory = Arc<dyn Fn(Engine) -> Result<Backend, String> + Send + Sync>;
+
+/// Çeviri önbellek dosyaları; yerel modelinkiler DeepL'inkilere karışmaz.
+#[derive(Clone, Debug, Default)]
+pub struct Caches {
+    pub deepl: Option<PathBuf>,
+    pub local: Option<PathBuf>,
+}
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -109,6 +158,9 @@ pub struct Status {
     pub running: bool,
     pub settings: Settings,
     pub has_deepl_key: bool,
+    pub has_local_model: bool,
+    /// İndirilecek modelin boyutu (MB).
+    pub local_model_mb: u64,
 }
 
 pub struct Controller {
@@ -122,13 +174,13 @@ struct Inner {
     emit: EventSink,
     make_reader: ReaderFactory,
     make_backend: BackendFactory,
-    cache_path: Option<PathBuf>,
+    caches: Caches,
 }
 
 impl Controller {
-    pub fn new(settings: Settings, emit: EventSink, make_reader: ReaderFactory, make_backend: BackendFactory, cache_path: Option<PathBuf>) -> Controller {
+    pub fn new(settings: Settings, emit: EventSink, make_reader: ReaderFactory, make_backend: BackendFactory, caches: Caches) -> Controller {
         Controller {
-            inner: Arc::new(Inner { settings: Mutex::new(settings), running: Mutex::new(None), emit, make_reader, make_backend, cache_path }),
+            inner: Arc::new(Inner { settings: Mutex::new(settings), running: Mutex::new(None), emit, make_reader, make_backend, caches }),
         }
     }
 
@@ -137,6 +189,8 @@ impl Controller {
             running: self.inner.running.lock().unwrap().is_some(),
             settings: self.inner.settings.lock().unwrap().clone(),
             has_deepl_key: storage::deepl_key().is_some(),
+            has_local_model: storage::local_model_dir().is_some_and(|dir| ceviri_opus::model::is_installed(&dir)),
+            local_model_mb: ceviri_opus::model::total_size().div_ceil(1_000_000),
         }
     }
 
@@ -202,14 +256,25 @@ impl Inner {
 
         let mut config = Config { fps: settings.fps, terms: Terms::new(&settings.protected_terms), ..Config::default() };
         if settings.translate {
-            config.backend = Some((self.make_backend)()?);
-            config.cache_path = self.cache_path.clone();
-            config.cache = self.cache_path.as_deref().map(storage::load_cache).unwrap_or_default();
+            if settings.engine == Engine::Local {
+                state("starting", "Çeviri modeli yükleniyor…");
+            }
+            config.backend = Some((self.make_backend)(settings.engine)?);
+            let deepl = self.caches.deepl.clone();
+            (config.cache_path, config.cache) = match settings.engine {
+                Engine::Deepl => (deepl.clone(), deepl.as_deref().map(storage::load_cache).unwrap_or_default()),
+                Engine::Local => {
+                    let local = self.caches.local.clone();
+                    let cache = local.as_deref().map(|path| storage::load_local_cache(path, deepl.as_deref())).unwrap_or_default();
+                    (local, cache)
+                }
+            };
         }
 
         state("starting", "Ekran okuma hazırlanıyor…");
         let reader = (self.make_reader)(&settings)?;
-        state("running", if settings.translate { "Türkçe çeviri" } else { "Çevirisiz test modu" });
+        let detail = if settings.translate { format!("Türkçe çeviri ({})", settings.engine.label()) } else { "Çevirisiz test modu".into() };
+        state("running", &detail);
 
         let emit = self.emit.clone();
         let tv_url = address.as_ref().map(|a| format!("ws://{a}")).unwrap_or_default();
@@ -234,7 +299,7 @@ impl Inner {
                 Event::Shown(texts) => UiEvent::Shown { texts },
                 Event::TvConnected => UiEvent::Tv { connected: true, address: tv_url.clone(), error: None },
                 Event::TvUnreachable(error) => UiEvent::Tv { connected: false, address: tv_url.clone(), error: Some(error) },
-                Event::TranslationFailed(error) => UiEvent::Error { message: format!("DeepL hatası: {error}") },
+                Event::TranslationFailed(error) => UiEvent::Error { message: format!("Çeviri hatası ({}): {error}", settings.engine.label()) },
                 Event::RoundSkipped(message) => UiEvent::Error { message },
             };
             emit(ui);
@@ -287,11 +352,11 @@ mod tests {
             let _ = sender.lock().unwrap().send(event);
         });
         let make_reader: ReaderFactory = Arc::new(|_| Ok(Box::new(FakeReader)));
-        (Controller::new(settings, emit, make_reader, backend, None), events)
+        (Controller::new(settings, emit, make_reader, backend, Caches::default()), events)
     }
 
     fn no_backend() -> BackendFactory {
-        Arc::new(|| Err("anahtar yok".into()))
+        Arc::new(|_| Err("anahtar yok".into()))
     }
 
     fn wait_for(events: &mpsc::Receiver<UiEvent>, wanted: impl Fn(&UiEvent) -> bool) -> Vec<UiEvent> {
@@ -346,18 +411,23 @@ mod tests {
     #[test]
     fn ceviri_arka_ucu_kullanilir() {
         let (address, messages) = fake_tv();
-        let backend: BackendFactory = Arc::new(|| {
+        let asked = Arc::new(Mutex::new(Vec::new()));
+        let log = asked.clone();
+        let backend: BackendFactory = Arc::new(move |engine| {
+            log.lock().unwrap().push(engine);
             let translate: Backend = Arc::new(|texts: &[String]| Ok(texts.iter().map(|t| format!("TR({t})")).collect()));
             Ok(translate)
         });
-        let settings = Settings { tv_address: address, translate: true, fps: 20.0, ..Settings::default() };
+        let settings = Settings { tv_address: address, translate: true, engine: Engine::Deepl, fps: 20.0, ..Settings::default() };
         let (controller, events) = controller(settings, backend);
 
         controller.start().unwrap();
-        wait_for(&events, |e| matches!(e, UiEvent::Shown { texts } if texts == &["TR(Play Local)"]));
+        let seen = wait_for(&events, |e| matches!(e, UiEvent::Shown { texts } if texts == &["TR(Play Local)"]));
         controller.stop();
 
         assert!(messages.try_iter().any(|m| m.blocks.iter().any(|b| b.text == "TR(Play Local)")));
+        assert_eq!(*asked.lock().unwrap(), [Engine::Deepl]);
+        assert!(seen.contains(&UiEvent::State { state: "running".into(), detail: "Türkçe çeviri (DeepL)".into() }));
     }
 
     #[test]
@@ -412,5 +482,17 @@ mod tests {
         assert_eq!(settings, Settings { tv_address: "192.168.1.5".into(), ..Settings::default() });
         let both: Settings = serde_json::from_str(r#"{"output":"both"}"#).unwrap();
         assert_eq!(both.output, Output::Both);
+        assert_eq!(serde_json::to_value(Settings::default()).unwrap()["engine"], "local");
+    }
+
+    #[test]
+    fn eski_ayarlarda_anahtar_varsa_deepl_kalir() {
+        let old = r#"{"tvAddress":"192.168.1.5","translate":true}"#;
+
+        assert_eq!(Settings::from_json(Some(old), true).engine, Engine::Deepl);
+        assert_eq!(Settings::from_json(Some(old), false).engine, Engine::Local);
+        assert_eq!(Settings::from_json(Some(r#"{"engine":"local"}"#), true).engine, Engine::Local);
+        assert_eq!(Settings::from_json(None, true), Settings::default());
+        assert_eq!(Settings::from_json(Some("{bozuk"), true), Settings::default());
     }
 }

@@ -9,6 +9,7 @@ pub mod deepl;
 pub mod frame_stats;
 pub mod geometry;
 pub mod language;
+pub mod opus_text;
 pub mod protocol;
 pub mod screen;
 pub mod stabilizer;

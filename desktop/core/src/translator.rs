@@ -18,6 +18,8 @@ pub enum TranslationError {
     InvalidResponse,
     /// Bağlantı/zaman aşımı gibi HTTP'ye ulaşamayan hatalar.
     Network(String),
+    /// Yerel çeviri modeli çalışamadı.
+    Local(String),
 }
 
 impl fmt::Display for TranslationError {
@@ -29,6 +31,7 @@ impl fmt::Display for TranslationError {
             TranslationError::Http(status) => write!(f, "HTTP {status}"),
             TranslationError::InvalidResponse => write!(f, "geçersiz yanıt"),
             TranslationError::Network(message) => write!(f, "ağ hatası: {message}"),
+            TranslationError::Local(message) => write!(f, "yerel çeviri hatası: {message}"),
         }
     }
 }
@@ -50,7 +53,7 @@ pub struct Translator {
 }
 
 impl Translator {
-    /// DeepL tek istekte en fazla 50 metin kabul eder.
+    /// DeepL tek istekte en fazla 50 metin kabul eder (yerel model için de makul bir parti boyu).
     pub const MAX_BATCH: usize = 50;
 
     pub fn new(cache: HashMap<String, String>) -> Translator {

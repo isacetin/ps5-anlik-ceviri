@@ -59,6 +59,8 @@ function renderShown(texts) {
 }
 
 const usesTv = (output) => output === "tv" || output === "both";
+// Formdaki "mod": çevirisiz test ya da çeviriyi yapan (yerel model / DeepL).
+const modeOf = (settings) => (settings.translate ? settings.engine : "test");
 
 function renderSettings(settings) {
   savedSettings = settings;
@@ -69,12 +71,12 @@ function renderSettings(settings) {
   $("tv-address-field").hidden = !usesTv(settings.output);
   $("tv-address").value = settings.tvAddress;
   for (const radio of document.querySelectorAll('input[name="mode"]')) {
-    radio.checked = radio.value === (settings.translate ? "translate" : "test");
+    radio.checked = radio.value === modeOf(settings);
   }
   $("fps").value = String(Math.round(settings.fps));
   $("window").value = settings.window;
   $("protected-terms").value = settings.protectedTerms.join("\n");
-  $("mode-value").textContent = settings.translate ? "Türkçe (DeepL)" : "Çevirisiz test";
+  $("mode-value").textContent = { local: "Türkçe (yerel model)", deepl: "Türkçe (DeepL)", test: "Çevirisiz test" }[modeOf(settings)];
   setLevel("mode-dot", settings.translate ? "ok" : "warn");
   if (!running) $("tv-value").textContent = usesTv(settings.output) ? "Bağlı değil" : "Kullanılmıyor";
 }
@@ -84,11 +86,23 @@ function readSettings() {
     ...savedSettings,
     output: document.querySelector('input[name="output"]:checked')?.value ?? "tv",
     tvAddress: $("tv-address").value.trim(),
-    translate: document.querySelector('input[name="mode"]:checked')?.value !== "test",
+    ...modeSettings(document.querySelector('input[name="mode"]:checked')?.value ?? "local"),
     fps: Number($("fps").value),
     window: $("window").value.trim(),
     protectedTerms: $("protected-terms").value.split("\n").map((t) => t.trim()).filter(Boolean),
   };
+}
+
+function modeSettings(mode) {
+  return mode === "test" ? { translate: false } : { translate: true, engine: mode };
+}
+
+function renderModel(installed, sizeMb) {
+  const badge = $("model-badge");
+  badge.textContent = installed ? "İndirildi" : "Yok";
+  badge.classList.toggle("ok", installed);
+  $("model-size").textContent = String(sizeMb);
+  $("model-download").textContent = installed ? "Yeniden doğrula" : "İndir";
 }
 
 function renderKey(hasKey) {
@@ -101,6 +115,7 @@ async function refresh() {
   const status = await invoke("status");
   renderSettings(status.settings);
   renderKey(status.hasDeeplKey);
+  renderModel(status.hasLocalModel, status.localModelMb);
   setState(status.running ? "running" : "stopped");
   return status;
 }
@@ -231,6 +246,32 @@ $("deepl").addEventListener("submit", async (event) => {
     note.textContent = String(error);
   }
   renderKey((await invoke("status")).hasDeeplKey);
+});
+
+$("model-download").addEventListener("click", async () => {
+  const note = $("model-note");
+  const button = $("model-download");
+  button.disabled = true;
+  note.className = "note";
+  note.textContent = "İndiriliyor…";
+  $("model-progress").hidden = false;
+  try {
+    note.textContent = await invoke("download_local_model");
+    note.className = "note ok";
+  } catch (error) {
+    note.className = "note bad";
+    note.textContent = String(error);
+  }
+  $("model-progress").hidden = true;
+  button.disabled = false;
+  const status = await invoke("status");
+  renderModel(status.hasLocalModel, status.localModelMb);
+});
+
+listen("model", ({ payload }) => {
+  const percent = Math.floor((payload.done * 100) / Math.max(payload.total, 1));
+  $("model-progress").value = percent;
+  $("model-note").textContent = `İndiriliyor… %${percent} (${Math.round(payload.done / 1e6)} / ${Math.round(payload.total / 1e6)} MB)`;
 });
 
 listen("ceviri", onEvent);

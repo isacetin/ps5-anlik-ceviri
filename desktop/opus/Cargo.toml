@@ -1,0 +1,21 @@
+[package]
+name = "ceviri-opus"
+description = "Yerel (çevrimdışı) çeviri: Opus-MT en→tr, CTranslate2 int8 ile (Mac + Windows)"
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+ceviri-core.workspace = true
+sha2 = "0.10"
+ureq = "3"
+
+# CTranslate2 kaynaktan derlenir (CMake gerekir). CPU arka uçları: Apple Silicon'da Accelerate + Ruy,
+# Windows'ta oneDNN (x86'da int8 için; MKL boyutu ve lisansı yüzünden kullanılmıyor).
+[target.'cfg(target_os = "macos")'.dependencies]
+ct2rs = { version = "0.10.2", default-features = false, features = ["sentencepiece", "accelerate", "ruy"] }
+
+[target.'cfg(windows)'.dependencies]
+ct2rs = { version = "0.10.2", default-features = false, features = ["sentencepiece", "dnnl"] }
+
+[target.'cfg(not(any(target_os = "macos", windows)))'.dependencies]
+ct2rs = { version = "0.10.2", default-features = false, features = ["sentencepiece", "ruy"] }

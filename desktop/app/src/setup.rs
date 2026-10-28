@@ -30,6 +30,9 @@ pub struct SetupStatus {
     remote_play: bool,
     tv_apk_available: bool,
     has_deepl_key: bool,
+    has_local_model: bool,
+    /// İndirilecek modelin boyutu (MB).
+    local_model_mb: u64,
     setup_done: bool,
 }
 
@@ -66,6 +69,8 @@ pub async fn setup_status(controller: State<'_, Controller>) -> Result<SetupStat
             remote_play: screen_recording != Some(false) && ceviri_platform::remote_play_open().unwrap_or(false),
             tv_apk_available: !TV_APK.is_empty(),
             has_deepl_key: storage::deepl_key().is_some(),
+            has_local_model: storage::local_model_dir().is_some_and(|dir| ceviri_opus::model::is_installed(&dir)),
+            local_model_mb: ceviri_opus::model::total_size().div_ceil(1_000_000),
             setup_done,
         }
     })

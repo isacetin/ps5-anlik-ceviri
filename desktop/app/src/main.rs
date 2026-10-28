@@ -11,12 +11,15 @@ mod controller;
 mod overlay;
 mod setup;
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-use ceviri_core::storage;
+use ceviri_core::{storage, terms, Terms};
 use ceviri_engine::pipeline::Backend;
 use ceviri_engine::DeepLClient;
-use controller::{BackendFactory, Controller, EventSink, ReaderFactory, Settings, Status, UiEvent};
+use ceviri_opus::{model, OpusTranslator};
+use controller::{BackendFactory, Caches, Controller, Engine, EventSink, ReaderFactory, Settings, Status, UiEvent};
+use serde::Serialize;
 use overlay::Overlay;
 use tauri::{Emitter, Manager, State, WindowEvent};
 
@@ -60,6 +63,57 @@ async fn save_deepl_key(key: String) -> Result<String, String> {
     .map_err(|e| e.to_string())?
 }
 
+#[derive(Clone, Serialize)]
+struct ModelProgress {
+    done: u64,
+    total: u64,
+}
+
+/// Aynı anda tek indirme.
+static DOWNLOADING: AtomicBool = AtomicBool::new(false);
+
+/// Yerel çeviri modelini indirir (ilerleme "model" olayıyla gelir), sonra örnek cümleyle dener.
+#[tauri::command]
+async fn download_local_model(app: tauri::AppHandle) -> Result<String, String> {
+    let dir = storage::local_model_dir().ok_or("uygulama klasörü bulunamadı")?;
+    if DOWNLOADING.swap(true, Ordering::SeqCst) {
+        return Err("İndirme zaten sürüyor.".into());
+    }
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let mut last_percent = u64::MAX;
+        model::download(&dir, |done, total| {
+            // Her bayt parçasında değil, yüzde değiştikçe.
+            let percent = done * 100 / total.max(1);
+            if percent != last_percent {
+                last_percent = percent;
+                let _ = app.emit_to("main", "model", ModelProgress { done, total });
+            }
+        })?;
+        let opus = OpusTranslator::load(&dir)?;
+        let translated = opus.translate(&[Terms::new(&[]).protect(SAMPLE)]).map_err(|e| format!("Model indirildi ama deneme çevirisi başarısız: {e}"))?;
+        Ok(format!("{SAMPLE} → {}", terms::unprotect(translated.first().map(String::as_str).unwrap_or(""))))
+    })
+    .await
+    .map_err(|e| e.to_string());
+    DOWNLOADING.store(false, Ordering::SeqCst);
+    result?
+}
+
+fn local_backend() -> Result<Backend, String> {
+    let dir = storage::local_model_dir().ok_or("uygulama klasörü bulunamadı")?;
+    if !model::is_installed(&dir) {
+        return Err("Yerel çeviri modeli indirilmemiş. Ayarlar'dan indirin ya da DeepL'i seçin.".into());
+    }
+    let opus = OpusTranslator::load(&dir)?;
+    Ok(Arc::new(move |texts: &[String]| opus.translate(texts)))
+}
+
+fn deepl_backend() -> Result<Backend, String> {
+    let key = storage::deepl_key().ok_or("DeepL anahtarı yok. Ayarlardan anahtarınızı ekleyin, yerel modeli seçin ya da çevirisiz test modunu deneyin.")?;
+    let client = DeepLClient::new(key);
+    Ok(Arc::new(move |texts: &[String]| client.translate(texts)))
+}
+
 fn main() {
     ceviri_platform::prepare_process();
     tauri::Builder::default()
@@ -77,13 +131,12 @@ fn main() {
                 let window = settings.window.trim();
                 ceviri_platform::screen_reader((!window.is_empty()).then_some(window), settings.fps, None)
             });
-            let make_backend: BackendFactory = Arc::new(|| {
-                let key = storage::deepl_key().ok_or("DeepL anahtarı yok. Ayarlardan anahtarınızı ekleyin ya da çevirisiz test modunu seçin.")?;
-                let client = DeepLClient::new(key);
-                let backend: Backend = Arc::new(move |texts: &[String]| client.translate(texts));
-                Ok(backend)
+            let make_backend: BackendFactory = Arc::new(|engine| match engine {
+                Engine::Local => local_backend(),
+                Engine::Deepl => deepl_backend(),
             });
-            let controller = Controller::new(Settings::load(), emit, make_reader, make_backend, storage::cache_path());
+            let caches = Caches { deepl: storage::cache_path(), local: storage::local_cache_path() };
+            let controller = Controller::new(Settings::load(), emit, make_reader, make_backend, caches);
             // Geliştirme: arayüze dokunmadan iş hattını denemek için.
             if std::env::var_os("CEVIRI_AUTOSTART").is_some() {
                 let _ = controller.start();
@@ -107,6 +160,7 @@ fn main() {
             start,
             stop,
             save_deepl_key,
+            download_local_model,
             setup::setup_status,
             setup::request_screen_recording,
             setup::open_privacy_settings,

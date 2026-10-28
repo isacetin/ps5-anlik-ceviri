@@ -6,21 +6,25 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use ceviri_core::{block_merger, storage, terms, ReadError, Stabilizer, Terms};
+use ceviri_engine::pipeline::Backend;
 use ceviri_engine::{discovery, tv_client, Config, DeepLClient, Event, Pipeline, TvClient};
+use ceviri_opus::{model, OpusTranslator};
 use ceviri_platform as platform;
 
 const USAGE: &str = "\
 Kullanım:
   ceviri run [seçenekler]        Remote Play'i okuyup Türkçe çeviriyi TV'ye gönderir (Ctrl+C ile çık)
     --tv HOST[:PORT]             TV adresi (verilmezse yerel ağda aranır; port varsayılan 8765)
-    --dry-run                    DeepL'e gitmeden İngilizce metni gönderir (hizalama testi, kota harcamaz)
+    --dry-run                    Çevirmeden İngilizce metni gönderir (hizalama testi, kota harcamaz)
+    --yerel                      DeepL yerine bilgisayardaki çeviri modelini kullanır (önce: ceviri model-indir)
     --fps N                      Saniyedeki tur (varsayılan 2, en az 1)
     --keep \"AD1,AD2\"              Çevrilmeyecek adlar (oyun, karakter); PlayStation, PS5 vb. hep korunur
     --verbose                    Her turun süresini yazar
     --once                       Tek tur çalışıp çıkar
   ceviri read [seçenekler]       TV'siz: OCR satırlarını ve sabit blokları yazar
     --count N                    Tur sayısı (varsayılan 5)
-  ceviri translate \"METİN\"       DeepL anahtarını tek bir metinle dener (önbelleği kullanmaz)
+  ceviri translate [--yerel] \"METİN\"  Tek bir metni çevirir (önbelleği kullanmaz; --yerel: yerel model)
+  ceviri model-indir             Yerel çeviri modelini indirir (~241 MB)
   ceviri windows                 Ekrandaki pencereleri listeler
 
 Ortak seçenekler (run, read):
@@ -45,6 +49,7 @@ fn main() {
         Some("run") => run(&args),
         Some("read") => read(&args),
         Some("translate") => translate(&args),
+        Some("model-indir") => download_model(),
         Some("windows") => list_windows(),
         _ => {
             println!("{USAGE}");
@@ -67,12 +72,15 @@ fn run(args: &[String]) -> Result<(), String> {
 
     let keep: Vec<String> = option(args, "--keep").map(|v| v.split(',').map(str::to_string).collect()).unwrap_or_default();
     let mut config = Config { fps, dump_dir: dump_dir(args)?, once: flag(args, "--once"), terms: Terms::new(&keep), ..Config::default() };
-    if !dry_run {
-        let key = storage::deepl_key().ok_or_else(|| {
-            let path = storage::deepl_key_path().map(|p| p.display().to_string()).unwrap_or_default();
-            format!("DeepL anahtarı bulunamadı. DEEPL_AUTH_KEY ortam değişkenini ayarla ya da anahtarı {path} dosyasına koy. Çevirisiz denemek için --dry-run.")
-        })?;
-        let deepl = DeepLClient::new(key);
+    let local = flag(args, "--yerel");
+    if !dry_run && local {
+        let opus = load_local()?;
+        config.cache_path = storage::local_cache_path();
+        config.cache = config.cache_path.as_deref().map(|path| storage::load_local_cache(path, storage::cache_path().as_deref())).unwrap_or_default();
+        println!("Yerel model yüklendi  önbellekte {} çeviri", config.cache.len());
+        config.backend = Some(Arc::new(move |texts: &[String]| opus.translate(texts)));
+    } else if !dry_run {
+        let deepl = DeepLClient::new(deepl_key()?);
         config.cache_path = storage::cache_path();
         config.cache = config.cache_path.as_deref().map(storage::load_cache).unwrap_or_default();
         println!("DeepL: {}  önbellekte {} çeviri", deepl.host(), config.cache.len());
@@ -88,7 +96,12 @@ fn run(args: &[String]) -> Result<(), String> {
         }
     };
     let tv = TvClient::new(address);
-    println!("TV: {}  fps: {fps}  mod: {}  (Ctrl+C ile çık)", tv.url(), if dry_run { "çevirisiz (dry-run)" } else { "DeepL EN→TR" });
+    let mode = match (dry_run, local) {
+        (true, _) => "çevirisiz (dry-run)",
+        (false, true) => "yerel model EN→TR",
+        (false, false) => "DeepL EN→TR",
+    };
+    println!("TV: {}  fps: {fps}  mod: {mode}  (Ctrl+C ile çık)", tv.url());
     println!("OCR modeli yükleniyor; ilk okuma ~30 sn sürebilir...");
 
     let reader = platform::screen_reader(option(args, "--bundle").as_deref(), fps, title_bar)?;
@@ -105,7 +118,7 @@ fn run(args: &[String]) -> Result<(), String> {
         Event::Shown(texts) => println!("TV: {}", texts.join("  |  ")),
         Event::TvConnected => println!("TV'ye bağlandı."),
         Event::TvUnreachable(error) => eprintln!("{error}"),
-        Event::TranslationFailed(error) => eprintln!("DeepL hatası: {error}"),
+        Event::TranslationFailed(error) => eprintln!("Çeviri hatası: {error}"),
         Event::RoundSkipped(error) => eprintln!("Tur atlandı: {error}"),
         Event::Frame { .. } => {}
     });
@@ -160,15 +173,54 @@ fn read(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
-fn translate(args: &[String]) -> Result<(), String> {
-    if args.len() < 2 {
-        return Err("Kullanım: ceviri translate \"Door is locked.\"".into());
+fn deepl_key() -> Result<String, String> {
+    storage::deepl_key().ok_or_else(|| {
+        let path = storage::deepl_key_path().map(|p| p.display().to_string()).unwrap_or_default();
+        format!("DeepL anahtarı bulunamadı. DEEPL_AUTH_KEY ortam değişkenini ayarla ya da anahtarı {path} dosyasına koy. Çevirisiz denemek için --dry-run, yerel model için --yerel.")
+    })
+}
+
+fn load_local() -> Result<OpusTranslator, String> {
+    let dir = storage::local_model_dir().ok_or("uygulama klasörü bulunamadı")?;
+    if !model::is_installed(&dir) {
+        return Err("Yerel çeviri modeli yok. Önce: ceviri model-indir".into());
     }
-    let key = storage::deepl_key().ok_or("DeepL anahtarı bulunamadı")?;
-    let text = args[1..].join(" ");
+    OpusTranslator::load(&dir)
+}
+
+fn translate(args: &[String]) -> Result<(), String> {
+    let local = flag(args, "--yerel");
+    let words: Vec<&str> = args[1..].iter().map(String::as_str).filter(|a| *a != "--yerel").collect();
+    if words.is_empty() {
+        return Err("Kullanım: ceviri translate [--yerel] \"Door is locked.\"".into());
+    }
+    let text = words.join(" ");
     let protected = Terms::new(&[]).protect(&text);
-    let translated = DeepLClient::new(key).translate(&[protected]).map_err(|e| format!("DeepL hatası: {e}"))?;
-    println!("{text}  →  {}", terms::unprotect(translated.first().map(String::as_str).unwrap_or("")));
+    let backend: Backend = if local {
+        let opus = load_local()?;
+        Arc::new(move |texts: &[String]| opus.translate(texts))
+    } else {
+        let deepl = DeepLClient::new(deepl_key()?);
+        Arc::new(move |texts: &[String]| deepl.translate(texts))
+    };
+    let started = Instant::now();
+    let translated = backend(&[protected]).map_err(|e| format!("Çeviri hatası: {e}"))?;
+    println!("{text}  →  {}  ({} ms)", terms::unprotect(translated.first().map(String::as_str).unwrap_or("")), started.elapsed().as_millis());
+    Ok(())
+}
+
+fn download_model() -> Result<(), String> {
+    let dir = storage::local_model_dir().ok_or("uygulama klasörü bulunamadı")?;
+    println!("Yerel çeviri modeli indiriliyor: {}", dir.display());
+    let mut last = u64::MAX;
+    model::download(&dir, |done, total| {
+        let percent = done * 100 / total.max(1);
+        if percent / 10 != last / 10 || done == total {
+            println!("  %{percent}  ({} / {} MB)", done / 1_000_000, total / 1_000_000);
+        }
+        last = percent;
+    })?;
+    println!("Hazır. Deneme: ceviri translate --yerel \"The door is locked.\"");
     Ok(())
 }
 

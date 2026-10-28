@@ -149,6 +149,18 @@ SCStream (pencere akışı) ─▶ 16:9 video alanı ─▶ Vision OCR ─▶ Bl
   asılı kalmaz. Mac bu yüzden liste değişmese de saniyede 2 kez gönderir.
 - **Neden önbellek + stabilizasyon?** DeepL kotası karakter başına sayılır; aynı yazının her karede
   yeniden çevrilmesi kotayı dakikalar içinde bitirirdi.
+- **Neden yerel model olarak Opus-MT?** Altyazıda hız her şeyden önemli. Opus-MT (Helsinki-NLP
+  `opus-mt-tc-big-en-tr`, CTranslate2 int8, 228 MB) cümle başına ~40–100 ms çevirir ve hiç uydurmaz.
+  Oyun diyaloglarında DeepL'in 97 puanına karşı 85 aldı; 4B'lik çeviri LLM'i (TranslateGemma) biraz
+  daha dengeli ama 3,3 GB ve cümle başına ~1 sn. NLLB-200 hem daha zayıf hem ticari kullanıma kapalı.
+  Karşılaştırma: [yerel-ceviri-karsilastirma.md](yerel-ceviri-karsilastirma.md).
+- **Yerel modelde adlar nasıl korunur?** DeepL `<x>` etiketinin içine dokunmaz; Opus-MT etiket
+  bilmez. Adlar modele `ZXQ0`, `ZXQ1`… yer tutucularıyla gider, sonra geri konur. Addan sonraki ek,
+  adın okunuşuna göre yeniden uyumlanır ("ZXQ0'da" → "PlayStation Store'da", "PS5'te"). Yer tutucu
+  kaybolursa metin adlarla birlikte bir kez daha çevrilir (`desktop/core/src/opus_text.rs`).
+- **Neden iki önbellek?** Yerel modelin çevirileri `translations-local.json`'a yazılır; DeepL'e
+  dönülünce daha iyi DeepL çevirileri bozulmamış olur. Yerel mod açılışta DeepL önbelleğini de okur
+  (aynı metin için DeepL çevirisi öncelikli).
 
 ### Doğrulanan kritik testler
 
@@ -180,6 +192,7 @@ SCStream (pencere akışı) ─▶ 16:9 video alanı ─▶ Vision OCR ─▶ Bl
 │   │                            ekran overlay'i (çeviri TV yerine/yanında oyun penceresinin üstünde)
 │   ├── core/                    Platformdan bağımsız mantık: PS5CeviriCore'un Rust karşılığı
 │   ├── engine/                  Çalışan iş hattı: TV istemcisi, mDNS ile TV bulma, DeepL, ana döngü
+│   ├── opus/                    Yerel çeviri: Opus-MT (CTranslate2 int8, ct2rs) ve model indirme
 │   ├── mac/                     Mac platform katmanı: CeviriBridge'i derleyip bağlar (build.rs)
 │   ├── platform/                İşletim sistemine göre okuyucu seçimi (uygulama ve CLI ortak kullanır)
 │   ├── tvsetup/                 TV uygulamasını ağ üzerinden kurar/kaldırır (adb protokolü, ek araç gerekmez)
@@ -291,6 +304,26 @@ git tag v0.2.0 && git push origin v0.2.0
 "Paketler" iş akışı TV APK'sını, Mac `.dmg`'sini ve Windows `.exe`'sini derler ve
 [Releases](https://github.com/isacetin/ps5-anlik-ceviri/releases)'te yayınlar (dosya adları ASCII:
 `AnlikCeviri_<sürüm>_mac_aarch64.dmg`, `AnlikCeviri_<sürüm>_windows_x64-setup.exe`).
+
+### Yerel çeviri modeli
+
+Model, uygulama paketine gömülmez; kullanıcı ilk kullanımda indirir. Dosyalar ayrı bir sürüm
+etiketinde (`model-opus-mt-en-tr-int8-v1`) durur; uygulama her dosyayı SHA-256 ile doğrular
+(`desktop/opus/src/model.rs`). Model şöyle üretilip yüklenir:
+
+```bash
+pip install ctranslate2 transformers torch sentencepiece
+ct2-transformers-converter --model Helsinki-NLP/opus-mt-tc-big-en-tr --output_dir opus-mt-en-tr-int8 \
+    --quantization int8 --copy_files source.spm target.spm
+gh release create model-opus-mt-en-tr-int8-v1 opus-mt-en-tr-int8/* --latest=false \
+    --title "Yerel çeviri modeli (Opus-MT en→tr, int8)" \
+    --notes "Helsinki-NLP/opus-mt-tc-big-en-tr, CC-BY 4.0. CTranslate2 int8'e çevrildi."
+```
+
+`--latest=false` önemlidir: README'deki indirme bağlantısı en son *uygulama* sürümünü göstermeli.
+Model değişirse yeni bir etiket (`-v2`) açılır ve `model.rs`'teki boyutlar ve özetler güncellenir.
+CTranslate2, `ct2rs` ile kaynaktan derlenir; derleme için CMake gerekir (GitHub'ın macOS ve Windows
+makinelerinde kurulu gelir). Mac'te Accelerate + Ruy, Windows'ta oneDNN kullanılır.
 
 ## Swift aracıyla elle kurulum (eski yöntem)
 

@@ -11,4 +11,5 @@ path = "src/main.rs"
 [dependencies]
 ceviri-core.workspace = true
 ceviri-engine.workspace = true
+ceviri-opus.workspace = true
 ceviri-platform.workspace = true

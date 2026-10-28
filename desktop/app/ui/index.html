@@ -71,8 +71,9 @@
           </label>
           <fieldset class="field">
             <legend>Mod</legend>
-            <label class="choice"><input type="radio" name="mode" value="translate"> Türkçe çeviri (DeepL)</label>
-            <label class="choice"><input type="radio" name="mode" value="test"> Çevirisiz test: İngilizce metni yerinde gösterir, kota harcamaz</label>
+            <label class="choice"><input type="radio" name="mode" value="local"> Türkçe çeviri, yerel model: bu bilgisayarda çalışır, hızlı, ücretsiz, internetsiz</label>
+            <label class="choice"><input type="radio" name="mode" value="deepl"> Türkçe çeviri, DeepL: en iyi kalite, API anahtarı ve internet gerekir</label>
+            <label class="choice"><input type="radio" name="mode" value="test"> Çevirisiz test: İngilizce metni yerinde gösterir</label>
           </fieldset>
           <label class="field">
             <span>Hız</span>
@@ -101,6 +102,21 @@
           </div>
           <p id="maintenance-note" class="note" role="status"></p>
         </form>
+      </details>
+    </section>
+
+    <section class="card">
+      <details id="model-panel">
+        <summary><h2>Yerel çeviri modeli</h2><span id="model-badge" class="badge">—</span></summary>
+        <div class="form">
+          <p class="help">Çeviriyi bu bilgisayarda yapar: altyazı başına yaklaşık 0,1 saniye, anahtar ve kota yok, internet gerekmez. Konuşmalarda DeepL'e yakın; deyimlerde ve bazı menü terimlerinde daha zayıf. Bir kez indirilir (<span id="model-size">~241</span> MB).</p>
+          <progress id="model-progress" max="100" value="0" hidden></progress>
+          <div class="actions">
+            <button type="button" id="model-download" class="secondary">İndir</button>
+            <span id="model-note" class="note" role="status"></span>
+          </div>
+          <small class="hint">Model: OPUS-MT (Helsinki-NLP, Helsinki Üniversitesi), CC-BY 4.0 lisansıyla.</small>
+        </div>
       </details>
     </section>
 

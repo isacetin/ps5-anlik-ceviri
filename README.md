@@ -22,7 +22,9 @@ Oyunu her zamanki gibi TV'den, gecikmesiz izlersiniz. Bilgisayar aynı görünt�
 - **Mac** (macOS 15 ya da üstü, Apple Silicon) veya **Windows 10/11** bilgisayar
 - Çeviriyi TV'de görmek için **Android TV / Google TV** (ör. Vestel, TCL, Philips, Sony).
   Samsung ve LG TV'lerde çeviri bilgisayar ekranında gösterilir.
-- Ücretsiz **DeepL API Free** hesabı (ayda 500.000 karakter)
+- Çeviri için hiçbir hesap gerekmez: **yerel model** bilgisayarda çalışır (bir kez ~241 MB iner).
+  İsterseniz daha yüksek kalite için ücretsiz **DeepL API Free** hesabı (ayda 500.000 karakter)
+  kullanabilirsiniz.
 - TV, bilgisayar ve PS5 **aynı ev ağında**
 
 ## İndirme
@@ -57,7 +59,8 @@ Uygulama ilk açıldığında **kurulum sihirbazı** her şeyi adım adım yapt�
    seçenekleri → **Ağ üzerinden hata ayıklama**) ve TV'nin sorduğu izni onaylarsınız. Kurulum,
    TV'de bir test yazısıyla biter.
 5. Kontrolcüyü (DualSense) bilgisayara bağlarsınız.
-6. DeepL anahtarınızı girersiniz ya da önce çevirisiz deneme moduyla başlarsınız.
+6. Çeviriyi kimin yapacağını seçersiniz: **yerel model** (önerilen; modeli sihirbaz indirir),
+   **DeepL** (anahtarınızı girersiniz) ya da önce çevirisiz deneme modu.
 
 ## Kullanım
 
@@ -66,8 +69,21 @@ Uygulama ilk açıldığında **kurulum sihirbazı** her şeyi adım adım yapt�
 3. TV'de PS5'in HDMI girişine geçip oynayın. İlk açılışta yazıların görünmesi ~30 saniye sürer.
 
 **Ayarlar**'dan şunları değiştirebilirsiniz: çevirilerin nerede gösterileceği, çevrilmemesi gereken
-adlar (oyun, karakter, yer adları), çevirisiz test modu ve okuma hızı. Kurulum sihirbazı da buradan
-yeniden açılır.
+adlar (oyun, karakter, yer adları), çeviriyi yerel modelin mi DeepL'in mi yapacağı, çevirisiz test
+modu ve okuma hızı. Kurulum sihirbazı da buradan yeniden açılır.
+
+### Yerel model mi, DeepL mi?
+
+| | Yerel model | DeepL |
+|---|---|---|
+| Hız | Altyazı başına ~0,1 sn | İnternet hızına bağlı |
+| Kalite | Konuşmalarda DeepL'e yakın; deyimlerde ve bazı menü terimlerinde daha zayıf | En iyi |
+| Gerekenler | Bir kez ~241 MB indirme | Ücretsiz hesap, API anahtarı, internet |
+| Sınır | Yok | Ayda 500.000 karakter |
+
+Ölçüm ayrıntıları: [docs/yerel-ceviri-karsilastirma.md](docs/yerel-ceviri-karsilastirma.md). Yerel
+model, Helsinki Üniversitesi'nin [OPUS-MT](https://huggingface.co/Helsinki-NLP/opus-mt-tc-big-en-tr)
+modelidir (CC-BY 4.0).
 
 ## TV uygulamasını kaldırma
 
@@ -88,7 +104,8 @@ devam eder (yalnızca güncellemek için yeniden açmanız gerekir).
 | Yazılar yanlış okunuyor | Remote Play penceresini büyütün ya da tam ekran yapın. |
 | TV'de kutular yazının üstüne tam oturmuyor | TV'nin resim formatını "Tam Piksel" ya da "Just Scan" yapın. |
 | Oyun ya da karakter adı çevriliyor | Ayarlar → **Çevrilmeyecek adlar**'a ekleyin. |
-| "DeepL: kota doldu" | Aylık 500.000 karakter bitti; yeni ayda açılır. Bu arada çevirisiz modu kullanabilirsiniz. |
+| "DeepL: kota doldu" | Aylık 500.000 karakter bitti; yeni ayda açılır. Bu arada Ayarlar'dan yerel modele geçebilirsiniz. |
+| "Yerel çeviri modeli indirilmemiş" | Ayarlar → **Yerel çeviri modeli** → İndir. İndirme yarıda kalırsa tekrar basın; kaldığı dosyadan devam eder. |
 
 ## Bilinen sınırlar
 

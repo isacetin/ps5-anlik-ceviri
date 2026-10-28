@@ -310,7 +310,49 @@
   }
 
   // 6 — Çeviri
+  const model = { busy: false, percent: 0, note: "", ok: false };
+
+  async function downloadModel() {
+    model.busy = true;
+    model.note = "İndiriliyor…";
+    model.ok = false;
+    render();
+    try {
+      model.note = await invoke("download_local_model");
+      model.ok = true;
+      status.hasLocalModel = true;
+    } catch (error) {
+      model.note = String(error);
+    }
+    model.busy = false;
+    render();
+  }
+
   function renderTranslate() {
+    const mode = settings.translate ? settings.engine : "test";
+    const choose = (value) => {
+      Object.assign(settings, value === "test" ? { translate: false } : { translate: true, engine: value });
+      render();
+    };
+    const choice = (value, title, detail) =>
+      el(
+        "label",
+        { class: "option" },
+        el("input", { type: "radio", name: "w-mode", value, checked: mode === value, onchange: () => choose(value) }),
+        el("span", {}, el("strong", {}, title), el("small", {}, detail)),
+      );
+
+    const local = el(
+      "div",
+      { class: "choice-detail" },
+      status.hasLocalModel
+        ? statusLine(true, "Model indirildi.")
+        : el("p", { class: "help" }, `Model bir kez indirilir (${status.localModelMb} MB).`),
+      model.busy ? el("progress", { max: "100", value: String(model.percent) }) : null,
+      status.hasLocalModel ? null : el("div", { class: "row" }, button(model.busy ? "İndiriliyor…" : "Modeli indir", downloadModel, "secondary", model.busy)),
+      model.note ? el("p", { class: model.ok ? "note ok" : model.busy ? "note" : "note bad" }, model.note) : null,
+    );
+
     const input = el("input", { type: "password", placeholder: "xxxxxxxx-xxxx-…:fx", autocomplete: "off", spellcheck: "false" });
     const note = el("span", { class: "note" });
     const save = async () => {
@@ -321,26 +363,31 @@
         note.className = "note ok";
         input.value = "";
         status.hasDeeplKey = true;
-        settings.translate = true;
       } catch (error) {
         note.className = "note bad";
         note.textContent = String(error);
       }
     };
-    return [
-      el("h2", { class: "title" }, "Çeviri"),
-      el("p", {}, "Çeviri için DeepL kullanılır. ", el("strong", {}, "DeepL API Free"), " hesabıyla ayda 500.000 karakter ücretsizdir (kayıtta kart istenir, ücret çekilmez)."),
+    const deepl = el(
+      "div",
+      { class: "choice-detail" },
+      el("p", { class: "help" }, el("strong", {}, "DeepL API Free"), " hesabıyla ayda 500.000 karakter ücretsizdir (kayıtta kart istenir, ücret çekilmez)."),
       status.hasDeeplKey ? statusLine(true, "Anahtar kayıtlı; değiştirmek isterseniz yenisini girin.") : null,
       el("div", { class: "row" }, button("DeepL hesabı aç", () => invoke("open_link", { which: "deepl" }))),
       el("label", { class: "field" }, el("span", {}, "API anahtarı (\":fx\" ile biter; yalnızca bu bilgisayarda saklanır)"), input),
       el("div", { class: "actions" }, button("Kaydet ve dene", save), note),
-      el(
-        "label",
-        { class: "option" },
-        el("input", { type: "checkbox", checked: !settings.translate, onchange: (e) => (settings.translate = !e.target.checked) }),
-        el("span", {}, el("strong", {}, "Şimdilik çevirisiz dene"), el("small", {}, "İngilizce yazıları olduğu yerde gösterir; kutuların doğru yere oturduğunu kota harcamadan görürsünüz.")),
-      ),
-      nav(),
+    );
+
+    const ready = mode === "test" || (mode === "local" ? status.hasLocalModel : status.hasDeeplKey);
+    return [
+      el("h2", { class: "title" }, "Çeviri"),
+      el("p", {}, "Çeviriyi kim yapsın?"),
+      choice("local", "Yerel model (önerilen)", "Bu bilgisayarda çalışır: altyazı başına ~0,1 sn, ücretsiz, internetsiz. Konuşmalarda DeepL'e yakın, deyimlerde daha zayıf."),
+      mode === "local" ? local : null,
+      choice("deepl", "DeepL", "En iyi çeviri kalitesi. Ücretsiz hesap ve API anahtarı gerekir, internet ister."),
+      mode === "deepl" ? deepl : null,
+      choice("test", "Şimdilik çevirisiz dene", "İngilizce yazıları olduğu yerde gösterir; kutuların doğru yere oturduğunu görürsünüz."),
+      nav({ next: ready || model.busy ? "Devam" : "Sonra yaparım", canNext: !model.busy }),
     ];
   }
 
@@ -349,7 +396,7 @@
     const where = { tv: "TV'de", screen: "bu ekranda", both: "TV'de ve bu ekranda" }[settings.output];
     return [
       el("h2", { class: "title" }, "Hazır"),
-      el("p", {}, `Çeviriler ${where} gösterilecek${settings.translate ? "" : " (çevirisiz test modu)"}.`),
+      el("p", {}, `Çeviriler ${where} gösterilecek (${{ local: "yerel model", deepl: "DeepL", test: "çevirisiz test modu" }[settings.translate ? settings.engine : "test"]}).`),
       el("p", {}, "Remote Play açıkken ana ekrandaki ", el("strong", {}, "Başlat"), "a basın. İlk açılışta yazı tanıma modeli ~30 saniyede yüklenir."),
       el("p", { class: "help" }, "Bu sihirbazı Ayarlar'dan istediğiniz zaman yeniden açabilirsiniz."),
       finishError ? el("p", { class: "error-inline" }, finishError) : null,
@@ -381,6 +428,12 @@
     document.getElementById("app-main").hidden = false;
   }
 
+  listen("model", ({ payload }) => {
+    model.percent = Math.floor((payload.done * 100) / Math.max(payload.total, 1));
+    model.note = `İndiriliyor… %${model.percent} (${Math.round(payload.done / 1e6)} / ${Math.round(payload.total / 1e6)} MB)`;
+    if (model.busy && active()[index]?.id === "translate") render();
+  });
+
   listen("kurulum", ({ payload }) => {
     tv.log.push(payload.label);
     if (tv.phase === "install") render();
@@ -393,6 +446,7 @@
       status = await invoke("setup_status");
       index = 0;
       Object.assign(tv, { phase: "prepare", found: [], selected: settings.tvAddress ?? "", log: [], error: "", busy: false });
+      Object.assign(model, { busy: false, percent: 0, note: "", ok: false });
       document.getElementById("app-main").hidden = true;
       document.getElementById("wizard").hidden = false;
       render();

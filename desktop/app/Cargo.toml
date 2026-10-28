@@ -14,6 +14,7 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 ceviri-core.workspace = true
 ceviri-engine.workspace = true
+ceviri-opus.workspace = true
 ceviri-platform.workspace = true
 ceviri-tvsetup.workspace = true
 serde.workspace = true

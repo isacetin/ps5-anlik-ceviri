@@ -1,4 +1,4 @@
-//! Kalıcı dosyalar: DeepL anahtarı ve çeviri önbelleği.
+//! Kalıcı dosyalar: DeepL anahtarı, çeviri önbellekleri ve yerel çeviri modeli.
 //! Konum: Mac'te `~/Library/Application Support/PS5Ceviri`, Windows'ta `%APPDATA%\PS5Ceviri`
 //! (Mac'teki Swift aracıyla aynı klasör; mevcut anahtar ve önbellek kullanılmaya devam eder).
 
@@ -37,8 +37,19 @@ pub fn deepl_key_path() -> Option<PathBuf> {
     app_dir().map(|dir| dir.join("deepl-key.txt"))
 }
 
+/// DeepL çevirileri.
 pub fn cache_path() -> Option<PathBuf> {
     app_dir().map(|dir| dir.join("translations.json"))
+}
+
+/// Yerel modelin çevirileri; DeepL önbelleğine karışmaz (DeepL'e dönülünce daha iyi çeviriler kalır).
+pub fn local_cache_path() -> Option<PathBuf> {
+    app_dir().map(|dir| dir.join("translations-local.json"))
+}
+
+/// İndirilen yerel çeviri modelinin klasörü.
+pub fn local_model_dir() -> Option<PathBuf> {
+    app_dir().map(|dir| dir.join("models").join("opus-mt-en-tr-int8"))
 }
 
 /// Önce `DEEPL_AUTH_KEY` ortam değişkeni, yoksa anahtar dosyası.
@@ -56,6 +67,16 @@ pub fn deepl_key() -> Option<String> {
 /// Dosya yoksa ya da bozuksa boş önbellek.
 pub fn load_cache(path: &Path) -> HashMap<String, String> {
     std::fs::read_to_string(path).ok().and_then(|json| serde_json::from_str(&json).ok()).unwrap_or_default()
+}
+
+/// Yerel modelin başlangıç önbelleği: kendi çevirileri, üstüne DeepL'inkiler (aynı metin için
+/// DeepL çevirisi daha iyidir ve bekletmeden gelir).
+pub fn load_local_cache(local: &Path, deepl: Option<&Path>) -> HashMap<String, String> {
+    let mut cache = load_cache(local);
+    if let Some(deepl) = deepl {
+        cache.extend(load_cache(deepl));
+    }
+    cache
 }
 
 /// Sıralı ve okunaklı JSON; yarım kalmış yazım önbelleği bozmasın diye önce geçici dosyaya yazılır.
@@ -90,6 +111,21 @@ mod tests {
 
         assert_eq!(load_cache(&path), cache);
         assert!(!path.with_extension("json.tmp").exists());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn yerel_onbellekte_deepl_cevirisi_once_gelir() {
+        let dir = temp_dir("local");
+        let local = dir.join("translations-local.json");
+        let deepl = dir.join("translations.json");
+        save_cache(&local, &HashMap::from([("Back".into(), "Geri dön".into()), ("Jump".into(), "Zıpla".into())])).unwrap();
+        save_cache(&deepl, &HashMap::from([("Back".into(), "Geri".into())])).unwrap();
+
+        let cache = load_local_cache(&local, Some(&deepl));
+
+        assert_eq!(cache, HashMap::from([("Back".into(), "Geri".into()), ("Jump".into(), "Zıpla".into())]));
+        assert_eq!(load_local_cache(&local, None).len(), 2);
         let _ = std::fs::remove_dir_all(dir);
     }
 
