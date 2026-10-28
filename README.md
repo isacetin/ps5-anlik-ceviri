@@ -43,8 +43,8 @@ indirin:
 
 | Sistem | Dosya | Boyut |
 |---|---|---|
-| Mac (Apple Silicon) | `AnlikCeviri_0.2.0_mac_aarch64.dmg` | 13 MB |
-| Windows (64 bit) | `AnlikCeviri_0.2.0_windows_x64-setup.exe` | 12 MB |
+| Mac (Apple Silicon) | `AnlikCeviri_0.2.0_mac_aarch64.dmg` | 14 MB |
+| Windows (64 bit) | `AnlikCeviri_0.2.0_windows_x64-setup.exe` | 17 MB |
 
 TV uygulaması dosyalara gömülüdür; ayrıca indirmeniz gerekmez.
 
