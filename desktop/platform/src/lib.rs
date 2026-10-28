@@ -52,6 +52,14 @@ pub fn open_privacy_settings(page: &str) -> Result<(), String> {
 /// Bu bilgisayarda oynanan oyunun okunması (PS5'ten bağımsız) yalnızca Windows'ta var.
 pub const GAME_SOURCE_SUPPORTED: bool = cfg!(windows);
 
+/// Windows: tıklamayı geçiren (katmanlı) pencerenin görünmesini sağlar; diğer sistemlerde bir şey yapmaz.
+pub fn show_layered_window(hwnd: isize) {
+    #[cfg(windows)]
+    ceviri_windows::win::show_layered(hwnd);
+    #[cfg(not(windows))]
+    let _ = hwnd;
+}
+
 /// PS Remote Play penceresi ekranda mı?
 pub fn remote_play_open() -> Result<bool, String> {
     #[cfg(target_os = "macos")]

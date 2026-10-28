@@ -408,7 +408,7 @@ checksum = "6d43a04d8753f35258c91f8ec639f792891f748a1edbd759cf1dcea3382ad83c"
 
 [[package]]
 name = "ceviri-app"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "ceviri-core",
  "ceviri-engine",
@@ -425,7 +425,7 @@ dependencies = [
 
 [[package]]
 name = "ceviri-cli"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "ceviri-core",
  "ceviri-engine",
@@ -435,7 +435,7 @@ dependencies = [
 
 [[package]]
 name = "ceviri-core"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "dirs 6.0.0",
  "serde",
@@ -446,7 +446,7 @@ dependencies = [
 
 [[package]]
 name = "ceviri-engine"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "ceviri-core",
  "mdns-sd",
@@ -457,7 +457,7 @@ dependencies = [
 
 [[package]]
 name = "ceviri-mac"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "ceviri-core",
  "serde",
@@ -466,7 +466,7 @@ dependencies = [
 
 [[package]]
 name = "ceviri-opus"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "ceviri-core",
  "ct2rs",
@@ -476,7 +476,7 @@ dependencies = [
 
 [[package]]
 name = "ceviri-platform"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "ceviri-core",
  "ceviri-mac",
@@ -485,7 +485,7 @@ dependencies = [
 
 [[package]]
 name = "ceviri-tvsetup"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "adb_client",
  "rsa",
@@ -493,7 +493,7 @@ dependencies = [
 
 [[package]]
 name = "ceviri-windows"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "ceviri-core",
  "image",
@@ -5473,7 +5473,7 @@ dependencies = [
 
 [[package]]
 name = "winprobe"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "ceviri-core",
  "ceviri-windows",

@@ -4,7 +4,10 @@ use std::thread::sleep;
 use std::time::{Duration, Instant};
 
 use windows::core::{Interface, Result};
-use windows::Graphics::Capture::{Direct3D11CaptureFrame, Direct3D11CaptureFramePool, GraphicsCaptureItem, GraphicsCaptureSession};
+use windows::Graphics::Capture::{
+    Direct3D11CaptureFrame, Direct3D11CaptureFramePool, GraphicsCaptureAccess, GraphicsCaptureAccessKind, GraphicsCaptureItem,
+    GraphicsCaptureSession,
+};
 use windows::Graphics::DirectX::Direct3D11::IDirect3DDevice;
 use windows::Graphics::DirectX::DirectXPixelFormat;
 use windows::Graphics::SizeInt32;
@@ -63,8 +66,15 @@ impl WindowCapture {
         let session = pool.CreateCaptureSession(&item)?;
         // Windows 10 2004+; eskilerde yok, önemli değil.
         let _ = session.SetIsCursorCaptureEnabled(false);
-        // Windows 11: yakalanan pencerenin (oyunun) etrafındaki sarı çerçeve çizilmesin. Windows
-        // 10'da yok; çerçeve kalır ama yakalama çalışır.
+        // Windows 11: yakalanan pencerenin (oyunun) etrafındaki sarı çerçeve çizilmesin. Önce izin
+        // istenir (paketlenmemiş uygulamaya soru sormadan verilir). Windows 10'da yok; çerçeve kalır
+        // ama yakalama çalışır.
+        static BORDERLESS: std::sync::Once = std::sync::Once::new();
+        BORDERLESS.call_once(|| {
+            if let Ok(request) = GraphicsCaptureAccess::RequestAccessAsync(GraphicsCaptureAccessKind::Borderless) {
+                let _ = request.get();
+            }
+        });
         let _ = session.SetIsBorderRequired(false);
         session.StartCapture()?;
 

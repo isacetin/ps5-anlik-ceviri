@@ -31,6 +31,33 @@ public static class Girdi {
         ReleaseDC(IntPtr.Zero, screen);
         return bitmap;
     }
+    public delegate bool EnumProc(IntPtr hwnd, IntPtr param);
+    [DllImport("user32.dll")] public static extern bool EnumWindows(EnumProc proc, IntPtr param);
+    [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint pid);
+    [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hwnd);
+    [DllImport("user32.dll")] public static extern int GetWindowLong(IntPtr hwnd, int index);
+    [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hwnd, out RECT rect);
+    [DllImport("user32.dll")] public static extern bool GetLayeredWindowAttributes(IntPtr hwnd, out uint key, out byte alpha, out uint flags);
+    [DllImport("user32.dll")] public static extern bool SetLayeredWindowAttributes(IntPtr hwnd, uint key, byte alpha, uint flags);
+    [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left, Top, Right, Bottom; }
+    public static string Title(IntPtr hwnd) {
+        var text = new StringBuilder(512);
+        GetWindowText(hwnd, text, text.Capacity);
+        return text.ToString();
+    }
+    // Surecin ust duzey pencereleri: hwnd, baslik, konum, gorunurluk, genisletilmis stil.
+    public static System.Collections.Generic.List<IntPtr> Windows(int pid) {
+        var list = new System.Collections.Generic.List<IntPtr>();
+        EnumWindows((hwnd, p) => { uint owner; GetWindowThreadProcessId(hwnd, out owner); if (owner == pid) list.Add(hwnd); return true; }, IntPtr.Zero);
+        return list;
+    }
+    public static string Describe(IntPtr hwnd) {
+        RECT r; GetWindowRect(hwnd, out r);
+        uint key; byte alpha; uint flags;
+        bool layered = GetLayeredWindowAttributes(hwnd, out key, out alpha, out flags);
+        return string.Format("{0} '{1}' ({2},{3})-({4},{5}) gorunur={6} exstyle=0x{7:X8} katman={8}/{9}/{10}",
+            hwnd, Title(hwnd), r.Left, r.Top, r.Right, r.Bottom, IsWindowVisible(hwnd), GetWindowLong(hwnd, -20), layered, alpha, flags);
+    }
     public static string ForegroundTitle() {
         var text = new StringBuilder(512);
         GetWindowText(GetForegroundWindow(), text, text.Capacity);
@@ -80,4 +107,12 @@ function Get-ForegroundTitle {
 
 function Minimize-Window([IntPtr]$hwnd) {
     [Girdi]::ShowWindow($hwnd, 6) | Out-Null
+}
+
+function Get-AppWindows([int]$processId) {
+    [Girdi]::Windows($processId) | Where-Object { [Girdi]::IsWindowVisible($_) }
+}
+
+function Show-AppWindows([int]$processId) {
+    foreach ($hwnd in [Girdi]::Windows($processId)) { Write-Host ("  " + [Girdi]::Describe($hwnd)) }
 }

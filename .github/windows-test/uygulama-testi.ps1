@@ -28,7 +28,13 @@ $app = Start-Process -FilePath $Exe -PassThru
 Start-Sleep -Seconds 15
 $app.Refresh()
 Check (-not $app.HasExited) "uygulama acildi"
-if ($app.MainWindowHandle -ne [IntPtr]::Zero) { Minimize-Window $app.MainWindowHandle }
+# Ana pencere ("Anlik Ceviri") oyunun onunde durmasin; overlay ve bolge penceresi kucultulmez.
+$mainTitle = "Anl" + [char]0x131 + "k " + [char]0xC7 + "eviri"
+Write-Host "Uygulamanin pencereleri:"
+Show-AppWindows $app.Id
+foreach ($hwnd in Get-AppWindows $app.Id) {
+    if ([Girdi]::Title($hwnd) -eq $mainTitle) { Minimize-Window $hwnd }
+}
 
 # Oyunu oyuncu gibi tiklayarak one al; ceviri bir sure calissin.
 Click-At 600 160
@@ -36,6 +42,10 @@ Start-Sleep -Seconds 12
 Save-Screen "$Out\1-calisiyor.png"
 $title = Get-ForegroundTitle
 Check ($title -eq "Oyun Testi") "ceviri calisirken oyun ondeki pencere (ondeki: '$title')"
+Write-Host "Uygulamanin pencereleri (calisirken):"
+Show-AppWindows $app.Id
+$overlay = Get-AppWindows $app.Id | Where-Object { [Girdi]::Title($_) -like "*overlay" } | Select-Object -First 1
+Check ($null -ne $overlay) "overlay penceresi var ve gorunur"
 
 Send-Keys "^+t"
 Start-Sleep -Seconds 3

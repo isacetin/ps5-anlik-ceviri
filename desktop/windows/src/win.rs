@@ -2,7 +2,7 @@
 
 use windows::core::{BOOL, PWSTR};
 use windows::Wdk::System::SystemServices::RtlGetVersion;
-use windows::Win32::Foundation::{CloseHandle, HWND, LPARAM, POINT, RECT};
+use windows::Win32::Foundation::{CloseHandle, COLORREF, HWND, LPARAM, POINT, RECT};
 use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_CLOAKED, DWMWA_EXTENDED_FRAME_BOUNDS};
 use windows::Win32::Graphics::Gdi::{ClientToScreen, GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST};
 use windows::Win32::System::SystemInformation::OSVERSIONINFOW;
@@ -12,6 +12,7 @@ use windows::Win32::System::Threading::{
 use windows::Win32::UI::HiDpi::{GetDpiForWindow, SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2};
 use windows::Win32::UI::WindowsAndMessaging::{
     EnumWindows, GetClientRect, GetWindowTextW, GetWindowThreadProcessId, IsIconic, IsWindowVisible, SetForegroundWindow,
+    SetLayeredWindowAttributes, LWA_ALPHA,
 };
 
 #[derive(Clone, Debug)]
@@ -70,6 +71,15 @@ pub fn client_screen(window: &WindowInfo) -> ceviri_core::Rect {
 pub fn focus(window: &WindowInfo) {
     unsafe {
         let _ = SetForegroundWindow(window.hwnd);
+    }
+}
+
+/// Katmanlı (WS_EX_LAYERED) pencere, katman özellikleri verilene kadar hiç çizilmez. Tıklamayı
+/// geçiren pencereye (tao bu stili ekler ama özelliği vermez) tam opaklık verilir; şeffaflık
+/// pencerenin kendi içeriğinden gelir.
+pub fn show_layered(hwnd: isize) {
+    unsafe {
+        let _ = SetLayeredWindowAttributes(HWND(hwnd as *mut _), COLORREF(0), 255, LWA_ALPHA);
     }
 }
 

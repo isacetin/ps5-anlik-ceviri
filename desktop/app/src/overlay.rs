@@ -102,8 +102,11 @@ impl Overlay {
             .visible(cfg!(windows))
             .build()?;
         place(&window, rect);
-        // Fare ve klavye oyuna gitsin; overlay yalnızca görüntüdür.
+        // Fare ve klavye oyuna gitsin; overlay yalnızca görüntüdür. Windows'ta bu pencereyi katmanlı
+        // yapar; katman özelliği verilmezse pencere hiç çizilmez.
         window.set_ignore_cursor_events(true)?;
+        #[cfg(windows)]
+        ceviri_platform::show_layered_window(window.hwnd()?.0 as isize);
         Ok(window)
     }
 }
