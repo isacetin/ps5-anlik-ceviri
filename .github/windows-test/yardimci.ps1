@@ -39,6 +39,9 @@ public static class Girdi {
     [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hwnd, out RECT rect);
     [DllImport("user32.dll")] public static extern bool GetLayeredWindowAttributes(IntPtr hwnd, out uint key, out byte alpha, out uint flags);
     [DllImport("user32.dll")] public static extern bool SetLayeredWindowAttributes(IntPtr hwnd, uint key, byte alpha, uint flags);
+    [DllImport("user32.dll")] public static extern bool GetWindowDisplayAffinity(IntPtr hwnd, out uint affinity);
+    // 0x11 = WDA_EXCLUDEFROMCAPTURE: pencere ekranda gorunur, yakalamada yoktur.
+    public static uint Affinity(IntPtr hwnd) { uint a; return GetWindowDisplayAffinity(hwnd, out a) ? a : 0xFFFFFFFF; }
     [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left, Top, Right, Bottom; }
     public static string Title(IntPtr hwnd) {
         var text = new StringBuilder(512);
@@ -55,8 +58,8 @@ public static class Girdi {
         RECT r; GetWindowRect(hwnd, out r);
         uint key; byte alpha; uint flags;
         bool layered = GetLayeredWindowAttributes(hwnd, out key, out alpha, out flags);
-        return string.Format("{0} '{1}' ({2},{3})-({4},{5}) gorunur={6} exstyle=0x{7:X8} katman={8}/{9}/{10}",
-            hwnd, Title(hwnd), r.Left, r.Top, r.Right, r.Bottom, IsWindowVisible(hwnd), GetWindowLong(hwnd, -20), layered, alpha, flags);
+        return string.Format("{0} '{1}' ({2},{3})-({4},{5}) gorunur={6} exstyle=0x{7:X8} katman={8}/{9}/{10} yakalama=0x{11:X}",
+            hwnd, Title(hwnd), r.Left, r.Top, r.Right, r.Bottom, IsWindowVisible(hwnd), GetWindowLong(hwnd, -20), layered, alpha, flags, Affinity(hwnd));
     }
     public static string ForegroundTitle() {
         var text = new StringBuilder(512);

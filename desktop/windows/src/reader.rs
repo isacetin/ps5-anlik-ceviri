@@ -2,15 +2,20 @@
 //! Pencereyi bul → yakalama oturumunu açık tut → en son karenin okunacak alanını kes → OCR.
 //! Okunacak alan PS Remote Play'de 16:9 video alanı, PC oyununda pencerenin istemci alanıdır
 //! (isteğe bağlı olarak kullanıcının seçtiği bölge).
+//!
+//! Bazı oyunlarda (ör. Call of Duty'nin "Fullscreen Extended Window" modu) pencere yakalaması
+//! siyah kare verir. Oyun modunda bu olunca oyunun bulunduğu monitör yakalanır ve oyunun
+//! istemci alanı oradan kesilir; uygulamanın kendi pencereleri o yakalamaya girmez.
 
 use std::path::Path;
 use std::time::{Duration, Instant};
 
 use ceviri_core::geometry::{client_rect, sub_rect, video_rect};
 use ceviri_core::{ReadError, Reading, Rect, ScreenReader, SharedRegion};
-use image::RgbaImage;
+use image::{imageops, RgbaImage};
 use windows::Media::Ocr::OcrEngine;
 use windows::Win32::Foundation::RECT;
+use windows::Win32::Graphics::Gdi::HMONITOR;
 
 use crate::capture::WindowCapture;
 use crate::imaging::{crop, draw_boxes, is_mostly_black, prepare_for_ocr};
@@ -19,6 +24,17 @@ use crate::{ensure_mta, ocr, win};
 /// Bu kadar tur üst üste siyah kare gelirse (2 fps'te ~10 sn) kullanıcı uyarılır; daha kısası
 /// yükleme ekranıdır.
 const BLACK_ROUNDS: u32 = 20;
+/// Pencere yakalaması bu kadar tur (~2 sn) siyah gelirse monitör yakalamaya geçilir.
+const WINDOW_BLACK_ROUNDS: u32 = 4;
+/// `CEVIRI_YAKALAMA=ekran`: oyun modunda baştan monitör yakalanır (test ve sorun giderme için).
+const CAPTURE_ENV: &str = "CEVIRI_YAKALAMA";
+
+/// Yakalanan şey: pencere ya da monitör (tutamaç, sayı olarak).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Target {
+    Window(isize),
+    Monitor(isize),
+}
 
 /// Neyin okunduğu.
 enum Source {
@@ -34,8 +50,10 @@ pub struct WindowsScreenReader {
     ocr_scale: f64,
     engine: OcrEngine,
     max_dimension: u32,
-    /// Açık yakalama oturumu ve ait olduğu pencere (HWND, sayı olarak).
-    capture: Option<(isize, WindowCapture)>,
+    /// Açık yakalama oturumu ve neyi yakaladığı.
+    capture: Option<(Target, WindowCapture)>,
+    /// Oyun modunda pencere yerine monitör yakalanıyor.
+    monitor: bool,
     last_video: Option<RgbaImage>,
     /// Üst üste gelen siyah kare sayısı (yalnızca oyun modu).
     black_rounds: u32,
@@ -55,7 +73,9 @@ impl WindowsScreenReader {
 
     /// Bu bilgisayarda oynanan oyun: `window` başlıkta ya da exe adında aranır.
     pub fn game(window: &str, region: SharedRegion) -> Result<WindowsScreenReader, String> {
-        Self::with_source(Source::Game { filter: window.to_lowercase(), region }, 1.0)
+        let mut reader = Self::with_source(Source::Game { filter: window.to_lowercase(), region }, 1.0)?;
+        reader.monitor = std::env::var(CAPTURE_ENV).is_ok_and(|v| v.eq_ignore_ascii_case("ekran"));
+        Ok(reader)
     }
 
     fn with_source(source: Source, ocr_scale: f64) -> Result<WindowsScreenReader, String> {
@@ -73,6 +93,7 @@ impl WindowsScreenReader {
             engine,
             max_dimension: setup.max_dimension,
             capture: None,
+            monitor: false,
             last_video: None,
             black_rounds: 0,
         })
@@ -103,8 +124,8 @@ impl WindowsScreenReader {
         }
     }
 
-    /// Yakalanan karede okunacak alan (piksel).
-    fn area(&self, window: &win::WindowInfo, image: &RgbaImage, fullscreen: bool) -> Rect {
+    /// Yakalanan karede okunacak alan (piksel). `base`: karenin ekrandaki yeri (pencere ya da monitör).
+    fn area(&self, window: &win::WindowInfo, base: RECT, image: &RgbaImage, fullscreen: bool) -> Rect {
         let (width, height) = (image.width() as f64, image.height() as f64);
         match &self.source {
             Source::RemotePlay { title_bar, .. } => {
@@ -113,7 +134,7 @@ impl WindowsScreenReader {
                 video_rect(width, height, top_inset)
             }
             Source::Game { region, .. } => {
-                let client = client_rect(rect(window.frame), rect(window.client), width, height);
+                let client = client_rect(rect(base), rect(window.client), width, height);
                 match *region.lock().unwrap() {
                     Some(region) => sub_rect(client, region),
                     None => client,
@@ -138,10 +159,21 @@ impl ScreenReader for WindowsScreenReader {
             }
         };
         let start = Instant::now();
-        let key = window.hwnd.0 as isize;
-        if self.capture.as_ref().map(|(hwnd, _)| *hwnd) != Some(key) {
-            let capture = WindowCapture::start(window.hwnd).map_err(|e| ReadError::Other(format!("Yakalama başlatılamadı: {e}")))?;
-            self.capture = Some((key, capture));
+        let (target, base) = match self.monitor.then(|| win::monitor_of(&window)).flatten() {
+            Some((monitor, bounds)) => {
+                // Overlay sonradan açılabilir: her turda bakılır (zaten ayarlı pencereye dokunulmaz).
+                win::exclude_own_windows(true);
+                (Target::Monitor(monitor.0 as isize), bounds)
+            }
+            None => (Target::Window(window.hwnd.0 as isize), window.frame),
+        };
+        if self.capture.as_ref().map(|(current, _)| *current) != Some(target) {
+            let capture = match target {
+                Target::Window(_) => WindowCapture::start(window.hwnd),
+                Target::Monitor(monitor) => WindowCapture::start_monitor(HMONITOR(monitor as *mut _)),
+            };
+            let capture = capture.map_err(|e| ReadError::Other(format!("Yakalama başlatılamadı: {e}")))?;
+            self.capture = Some((target, capture));
         }
         let (_, capture) = self.capture.as_mut().expect("oturum az önce açıldı");
         let image = match capture.latest_frame(Duration::from_millis(500)) {
@@ -157,27 +189,46 @@ impl ScreenReader for WindowsScreenReader {
         };
 
         let fullscreen = win::is_fullscreen(&window);
-        let video_px = self.area(&window, &image, fullscreen);
+        let video_px = self.area(&window, base, &image, fullscreen);
         let video = crop(&image, video_px);
         let captured = Instant::now();
 
-        // Tüm kareye bakılır: seçili bölge (altyazı bandı) karanlık sahnede yazısızken de siyahtır.
+        // Oyunun tüm istemci alanına bakılır: seçili bölge (altyazı bandı) karanlık sahnede
+        // yazısızken de siyahtır.
         if matches!(self.source, Source::Game { .. }) {
-            self.black_rounds = if is_mostly_black(&image) { self.black_rounds + 1 } else { 0 };
+            let client = client_rect(rect(base), rect(window.client), image.width() as f64, image.height() as f64);
+            let view = imageops::crop_imm(
+                &image,
+                client.x as u32,
+                client.y as u32,
+                (client.width as u32).max(1),
+                (client.height as u32).max(1),
+            );
+            self.black_rounds = if is_mostly_black(&*view) { self.black_rounds + 1 } else { 0 };
+            if !self.monitor && self.black_rounds == WINDOW_BLACK_ROUNDS {
+                // Pencere yakalaması bu oyunda çalışmıyor: monitöre geçilir, sonraki tur oradan okur.
+                self.monitor = true;
+                self.black_rounds = 0;
+                return Err(ReadError::NoFrameYet);
+            }
             if self.black_rounds == BLACK_ROUNDS {
-                return Err(ReadError::Other(
-                    "Oyun görüntüsü alınamıyor (kare siyah). Oyunun grafik ayarlarında ekran modunu \"Kenarlıksız pencere\" (Borderless) ya da \"Pencere\" yapın; özel tam ekran yakalanamaz.".into(),
-                ));
+                return Err(ReadError::Other(format!(
+                    "Oyun görüntüsü alınamıyor (kare siyah; pencere: \"{}\", {}, {}x{}). Oyunun grafik ayarlarında ekran modunu \"Kenarlıksız pencere\" (Fullscreen Borderless) ya da \"Pencere\" (Windowed) yapın; özel tam ekran yakalanamaz.",
+                    window.title,
+                    window.exe,
+                    window.width(),
+                    window.height(),
+                )));
             }
         }
 
-        // Kare pencere sınırının fiziksel piksel karşılığıdır; ekran konumu da fiziksel piksel
-        // (overlay öyle yerleşir; farklı ölçekli monitörlerde mantıksal birim kayardı).
-        let scale_x = image.width() as f64 / window.width().max(1) as f64;
-        let scale_y = image.height() as f64 / window.height().max(1) as f64;
+        // Kare, yakalanan pencerenin ya da monitörün fiziksel piksel karşılığıdır; ekran konumu da
+        // fiziksel piksel (overlay öyle yerleşir; farklı ölçekli monitörlerde mantıksal birim kayardı).
+        let scale_x = image.width() as f64 / (base.right - base.left).max(1) as f64;
+        let scale_y = image.height() as f64 / (base.bottom - base.top).max(1) as f64;
         let screen = Rect::new(
-            window.frame.left as f64 + video_px.x / scale_x,
-            window.frame.top as f64 + video_px.y / scale_y,
+            base.left as f64 + video_px.x / scale_x,
+            base.top as f64 + video_px.y / scale_y,
             video_px.width / scale_x,
             video_px.height / scale_y,
         );
@@ -200,5 +251,14 @@ impl ScreenReader for WindowsScreenReader {
     fn dump(&self, path: &Path, boxes: &[Rect]) -> Result<(), String> {
         let video = self.last_video.as_ref().ok_or("henüz okunmuş kare yok")?;
         draw_boxes(video, boxes).save(path).map_err(|e| format!("{}: {e}", path.display()))
+    }
+}
+
+impl Drop for WindowsScreenReader {
+    fn drop(&mut self) {
+        // Çeviri durunca uygulamanın pencereleri yeniden ekran görüntüsüne/kayda girsin.
+        if self.monitor {
+            win::exclude_own_windows(false);
+        }
     }
 }

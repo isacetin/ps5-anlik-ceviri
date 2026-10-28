@@ -1,7 +1,7 @@
 //! Platformdan bağımsız görüntü işlemleri (her işletim sisteminde derlenir ve test edilir).
 
 use ceviri_core::Rect;
-use image::{imageops, Rgba, RgbaImage};
+use image::{imageops, GenericImageView, Rgba, RgbaImage};
 
 /// Piksel dikdörtgeni görüntü sınırlarına kırparak keser; en az 1x1 döner.
 pub fn crop(image: &RgbaImage, rect: Rect) -> RgbaImage {
@@ -14,7 +14,7 @@ pub fn crop(image: &RgbaImage, rect: Rect) -> RgbaImage {
 
 /// Kare neredeyse tamamen siyah mı? Özel tam ekran (exclusive fullscreen) oyunlar ve korumalı
 /// içerik yakalamada siyah gelir. Hız için seyrek bir ızgara örneklenir.
-pub fn is_mostly_black(image: &RgbaImage) -> bool {
+pub fn is_mostly_black(image: &impl GenericImageView<Pixel = Rgba<u8>>) -> bool {
     const STEP: usize = 16;
     let (w, h) = image.dimensions();
     let (mut bright, mut total) = (0u32, 0u32);

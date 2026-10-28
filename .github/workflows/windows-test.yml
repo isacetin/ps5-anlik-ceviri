@@ -72,6 +72,21 @@ jobs:
           if ($out -notmatch "door is locked") { throw "Bölgede altyazı okunmadı" }
           if ($out -match "Options") { throw "Bölge dışındaki menü okundu" }
 
+      - name: Komut satırı - monitör yakalama
+        shell: pwsh
+        env:
+          CEVIRI_YAKALAMA: ekran
+        run: |
+          $out = .\desktop\target\release\ceviri.exe read --oyun "Oyun Testi" --count 4 --dump test-sonuc\cli-ekran 2>&1 | Out-String
+          $out | Tee-Object -FilePath test-sonuc\cli-ekran.txt
+          if ($LASTEXITCODE -ne 0) { throw "ceviri read hata verdi" }
+          if ($out -notmatch "door is locked") { throw "Monitör yakalamada altyazı okunmadı" }
+          if ($out -notmatch "Options") { throw "Monitör yakalamada menü okunmadı" }
+          $out = .\desktop\target\release\ceviri.exe read --oyun "Oyun Testi" --count 3 --bolge 0,0.65,1,0.35 --dump test-sonuc\cli-ekran-bolge 2>&1 | Out-String
+          $out | Tee-Object -FilePath test-sonuc\cli-ekran-bolge.txt
+          if ($out -notmatch "door is locked") { throw "Monitör yakalamada bölgede altyazı okunmadı" }
+          if ($out -match "Options") { throw "Monitör yakalamada bölge dışı okundu" }
+
       - name: Yerel çeviri modeli
         id: model
         continue-on-error: true
@@ -88,6 +103,12 @@ jobs:
         run: |
           $translate = "${{ steps.model.outcome }}" -eq "success"
           .\.github\windows-test\uygulama-testi.ps1 -Exe "$PWD\desktop\target\release\anlik-ceviri.exe" -Out "$PWD\test-sonuc\uygulama" -DataDir $env:CEVIRI_DATA_DIR -Translate $translate
+
+      - name: Uygulama - monitör yakalama
+        shell: pwsh
+        run: |
+          $translate = "${{ steps.model.outcome }}" -eq "success"
+          .\.github\windows-test\uygulama-testi.ps1 -Exe "$PWD\desktop\target\release\anlik-ceviri.exe" -Out "$PWD\test-sonuc\uygulama-ekran" -DataDir $env:CEVIRI_DATA_DIR -Translate $translate -Monitor $true
 
       - name: Sonuçlar
         if: always()

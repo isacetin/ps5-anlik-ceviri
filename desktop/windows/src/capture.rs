@@ -1,4 +1,4 @@
-//! Windows.Graphics.Capture ile tek bir pencereden kare akışı (Mac'teki SCStream karşılığı).
+//! Windows.Graphics.Capture ile tek bir pencereden ya da monitörden kare akışı (Mac'teki SCStream karşılığı).
 
 use std::thread::sleep;
 use std::time::{Duration, Instant};
@@ -19,6 +19,7 @@ use windows::Win32::Graphics::Direct3D11::{
     D3D11_TEXTURE2D_DESC, D3D11_USAGE_STAGING,
 };
 use windows::Win32::Graphics::Dxgi::IDXGIDevice;
+use windows::Win32::Graphics::Gdi::HMONITOR;
 use windows::Win32::System::WinRT::Direct3D11::{CreateDirect3D11DeviceFromDXGIDevice, IDirect3DDxgiInterfaceAccess};
 use windows::Win32::System::WinRT::Graphics::Capture::IGraphicsCaptureItemInterop;
 
@@ -48,6 +49,18 @@ pub struct WindowCapture {
 
 impl WindowCapture {
     pub fn start(hwnd: HWND) -> Result<WindowCapture> {
+        let interop = windows::core::factory::<GraphicsCaptureItem, IGraphicsCaptureItemInterop>()?;
+        Self::start_item(unsafe { interop.CreateForWindow(hwnd)? })
+    }
+
+    /// Bütün monitör. Bazı oyunların (ör. "Fullscreen Extended Window" modu) pencere yakalaması
+    /// siyah gelir; ekranın kendisi ise yakalanabilir.
+    pub fn start_monitor(monitor: HMONITOR) -> Result<WindowCapture> {
+        let interop = windows::core::factory::<GraphicsCaptureItem, IGraphicsCaptureItemInterop>()?;
+        Self::start_item(unsafe { interop.CreateForMonitor(monitor)? })
+    }
+
+    fn start_item(item: GraphicsCaptureItem) -> Result<WindowCapture> {
         // Sanal makinelerde donanım D3D11 olmayabilir; o zaman yazılımsal WARP denenir.
         let (device, context, software) = match create_device(D3D_DRIVER_TYPE_HARDWARE) {
             Ok((device, context)) => (device, context, false),
@@ -59,8 +72,6 @@ impl WindowCapture {
         let dxgi: IDXGIDevice = device.cast()?;
         let d3d: IDirect3DDevice = unsafe { CreateDirect3D11DeviceFromDXGIDevice(&dxgi)? }.cast()?;
 
-        let interop = windows::core::factory::<GraphicsCaptureItem, IGraphicsCaptureItemInterop>()?;
-        let item: GraphicsCaptureItem = unsafe { interop.CreateForWindow(hwnd)? };
         let pool_size = item.Size()?;
         let pool = Direct3D11CaptureFramePool::CreateFreeThreaded(&d3d, DirectXPixelFormat::B8G8R8A8UIntNormalized, 2, pool_size)?;
         let session = pool.CreateCaptureSession(&item)?;

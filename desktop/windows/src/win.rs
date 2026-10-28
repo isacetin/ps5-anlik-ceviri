@@ -4,15 +4,15 @@ use windows::core::{BOOL, PWSTR};
 use windows::Wdk::System::SystemServices::RtlGetVersion;
 use windows::Win32::Foundation::{CloseHandle, COLORREF, HWND, LPARAM, POINT, RECT};
 use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_CLOAKED, DWMWA_EXTENDED_FRAME_BOUNDS};
-use windows::Win32::Graphics::Gdi::{ClientToScreen, GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST};
+use windows::Win32::Graphics::Gdi::{ClientToScreen, GetMonitorInfoW, MonitorFromWindow, HMONITOR, MONITORINFO, MONITOR_DEFAULTTONEAREST};
 use windows::Win32::System::SystemInformation::OSVERSIONINFOW;
 use windows::Win32::System::Threading::{
-    OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
+    GetCurrentProcessId, OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
 };
 use windows::Win32::UI::HiDpi::{GetDpiForWindow, SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2};
 use windows::Win32::UI::WindowsAndMessaging::{
-    EnumWindows, GetClientRect, GetWindowTextW, GetWindowThreadProcessId, IsIconic, IsWindowVisible, SetForegroundWindow,
-    SetLayeredWindowAttributes, LWA_ALPHA,
+    EnumWindows, GetClientRect, GetWindowDisplayAffinity, GetWindowTextW, GetWindowThreadProcessId, IsIconic, IsWindowVisible,
+    SetForegroundWindow, SetLayeredWindowAttributes, SetWindowDisplayAffinity, LWA_ALPHA, WDA_EXCLUDEFROMCAPTURE, WDA_NONE,
 };
 
 #[derive(Clone, Debug)]
@@ -80,6 +80,43 @@ pub fn focus(window: &WindowInfo) {
 pub fn show_layered(hwnd: isize) {
     unsafe {
         let _ = SetLayeredWindowAttributes(HWND(hwnd as *mut _), COLORREF(0), 255, LWA_ALPHA);
+    }
+}
+
+/// Pencerenin bulunduğu monitör ve ekrandaki yeri (fiziksel piksel).
+pub fn monitor_of(window: &WindowInfo) -> Option<(HMONITOR, RECT)> {
+    unsafe {
+        let monitor = MonitorFromWindow(window.hwnd, MONITOR_DEFAULTTONEAREST);
+        let mut info = MONITORINFO { cbSize: std::mem::size_of::<MONITORINFO>() as u32, ..Default::default() };
+        GetMonitorInfoW(monitor, &mut info).as_bool().then_some((monitor, info.rcMonitor))
+    }
+}
+
+/// Bu uygulamanın bütün üst düzey pencerelerini (overlay, ana pencere, bölge seçimi) ekran
+/// yakalamasından çıkarır ya da geri katar. Monitör yakalanırken overlay kareye girerse çeviriler
+/// yeniden okunur; çıkarılan pencere ekranda görünür, yakalamada yerine arkasındaki oyun gelir.
+/// Sonradan açılan pencereler için tekrar çağrılır; zaten ayarlı pencereye dokunulmaz.
+pub fn exclude_own_windows(exclude: bool) {
+    unsafe extern "system" fn collect(hwnd: HWND, lparam: LPARAM) -> BOOL {
+        let list = unsafe { &mut *(lparam.0 as *mut Vec<HWND>) };
+        list.push(hwnd);
+        true.into()
+    }
+
+    let wanted = if exclude { WDA_EXCLUDEFROMCAPTURE } else { WDA_NONE };
+    let mut handles: Vec<HWND> = Vec::new();
+    unsafe {
+        let _ = EnumWindows(Some(collect), LPARAM(&mut handles as *mut _ as isize));
+        let own = GetCurrentProcessId();
+        for hwnd in handles {
+            let mut pid = 0u32;
+            GetWindowThreadProcessId(hwnd, Some(&mut pid));
+            let mut current = 0u32;
+            if pid != own || (GetWindowDisplayAffinity(hwnd, &mut current).is_ok() && current == wanted.0) {
+                continue;
+            }
+            let _ = SetWindowDisplayAffinity(hwnd, wanted);
+        }
     }
 }
 

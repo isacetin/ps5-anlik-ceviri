@@ -4,7 +4,9 @@ param(
     [Parameter(Mandatory)] [string]$Exe,
     [Parameter(Mandatory)] [string]$Out,
     [Parameter(Mandatory)] [string]$DataDir,
-    [bool]$Translate = $true
+    [bool]$Translate = $true,
+    # Pencere yerine monitor yakalanir (pencere yakalamasi siyah gelen oyunlardaki yol).
+    [bool]$Monitor = $false
 )
 $ErrorActionPreference = "Stop"
 . "$PSScriptRoot\yardimci.ps1"
@@ -24,6 +26,7 @@ $settings = @{
 
 $env:CEVIRI_DATA_DIR = $DataDir
 $env:CEVIRI_AUTOSTART = "1"
+$env:CEVIRI_YAKALAMA = if ($Monitor) { "ekran" } else { "" }
 $app = Start-Process -FilePath $Exe -PassThru
 Start-Sleep -Seconds 15
 $app.Refresh()
@@ -46,6 +49,10 @@ Write-Host "Uygulamanin pencereleri (calisirken):"
 Show-AppWindows $app.Id
 $overlay = Get-AppWindows $app.Id | Where-Object { [Girdi]::Title($_) -like "*overlay" } | Select-Object -First 1
 Check ($null -ne $overlay) "overlay penceresi var ve gorunur"
+if ($Monitor -and $overlay) {
+    # Overlay kendi yakaladigimiz goruntuye girerse ceviriler yeniden okunur.
+    Check ([Girdi]::Affinity($overlay) -eq 0x11) "monitor yakalanirken overlay yakalamadan haric"
+}
 
 Send-Keys "^+t"
 Start-Sleep -Seconds 3
