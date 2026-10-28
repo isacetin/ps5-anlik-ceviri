@@ -1,10 +1,11 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Ana pencere ve ekran overlay'i: uygulama komutları ve olay dinleme",
+  "description": "Ana pencere, ekran overlay'i ve bölge seçme penceresi: uygulama komutları ve olay dinleme",
   "windows": [
     "main",
-    "overlay"
+    "overlay",
+    "region"
   ],
   "permissions": [
     "core:default"

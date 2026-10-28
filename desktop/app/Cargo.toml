@@ -21,6 +21,8 @@ serde.workspace = true
 serde_json.workspace = true
 # macos-private-api: şeffaf overlay penceresi için (yalnızca Mac App Store dağıtımını engeller).
 tauri = { version = "2", features = ["macos-private-api"] }
+# PC oyununda oyundan çıkmadan overlay'i gizlemek ve bölge seçmek için (yalnızca Rust'tan kaydedilir).
+tauri-plugin-global-shortcut = "2"
 
 [dev-dependencies]
 tungstenite = "0.30"

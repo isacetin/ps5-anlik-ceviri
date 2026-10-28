@@ -189,7 +189,8 @@ SCStream (pencere akışı) ─▶ 16:9 video alanı ─▶ Vision OCR ─▶ Bl
 │   └── Sources/ps5ceviri/       DeepL, WebSocket, TV bulma, komut satırı
 ├── desktop/                     Mac + Windows masaüstü uygulaması (Rust workspace, geliştiriliyor)
 │   ├── app/                     Masaüstü uygulaması (Tauri): Başlat/Durdur, durum, ayarlar, DeepL anahtarı,
-│   │                            ekran overlay'i (çeviri TV yerine/yanında oyun penceresinin üstünde)
+│   │                            ekran overlay'i (çeviri TV yerine/yanında oyun penceresinin üstünde),
+│   │                            PC oyunu için bölge seçimi ve global kısayollar
 │   ├── core/                    Platformdan bağımsız mantık: PS5CeviriCore'un Rust karşılığı
 │   ├── engine/                  Çalışan iş hattı: TV istemcisi, mDNS ile TV bulma, DeepL, ana döngü
 │   ├── opus/                    Yerel çeviri: Opus-MT (CTranslate2 int8, ct2rs) ve model indirme
@@ -224,6 +225,29 @@ TV uygulaması sıradan bir uygulamadır (cihaz yöneticisi ya da sistem uygulam
 **Ayarlar → Uygulamalar** menüsünden ya da masaüstü uygulamasının Ayarlar'ındaki **"TV uygulamasını
 kaldır"** düğmesiyle istenildiği zaman kaldırılır. Kurulumdan sonra "Ağ üzerinden hata ayıklama"
 kapatılabilir; TV uygulaması çalışmaya devam eder (yalnızca güncelleme için yeniden açmak gerekir).
+
+**PC oyunu kaynağı (yalnızca Windows).** `Settings.source` `remotePlay` (varsayılan) ya da `pcGame`
+olur. PC oyununda:
+
+- Okuyucu `WindowsScreenReader::game` ile kurulur. 16:9 video alanı yerine pencerenin **istemci
+  alanı** (`win::WindowInfo.client`, başlık çubuğu ve kenarlar hariç) okunur
+  (`core::geometry::client_rect`).
+- Kullanıcı bir **bölge** seçtiyse yalnızca o kesilir (`sub_rect`). Bölge istemci alanına göre 0–1
+  aralığındadır ve oyuna göre (`Settings.regions`, anahtar: seçili pencere metni, küçük harf)
+  saklanır.
+- Bölge okuyucuya paylaşılan bir değerle (`SharedRegion`) verilir; `set_region` çalışırken de
+  değiştirir, okuyucu bir sonraki turda yeni bölgeyi okur. `Reading.screen` bölgenin ekrandaki yeri
+  olduğu için overlay de yalnızca bölgeyi kaplar.
+- Blok birleştirme okunan alanın gerçek en-boy oranını kullanır (21:9 monitör, ince altyazı bandı).
+- Çıkış her zaman ekran overlay'idir; TV aranmaz.
+- 20 tur üst üste siyah kare gelirse (özel tam ekran) kullanıcı "Kenarlıksız pencere"ye yönlendirilir.
+- Global kısayollar (`app/src/shortcuts.rs`, `tauri-plugin-global-shortcut`) yalnızca PC oyunu
+  okunurken kayıtlıdır: <kbd>Ctrl+Shift+T</kbd> overlay'i gizler/gösterir,
+  <kbd>Ctrl+Shift+R</kbd> oyunun istemci alanını kaplayan bölge seçme penceresini açar
+  (`app/src/region.rs`, `ui/region.html`).
+
+Komut satırından: `ceviri windows` pencereleri listeler; `ceviri read --oyun game.exe --bolge 0,0.7,1,0.3`
+OCR'ı denetler.
 
 Ayarlardaki **"Çevirileri nerede göster?"** seçeneğiyle çeviri TV'de, bu bilgisayarın ekranında
 (oyun penceresinin üstünde, şeffaf ve tıklamayı geçiren bir katman) ya da ikisinde gösterilir. Ekran

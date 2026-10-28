@@ -63,6 +63,9 @@ impl WindowCapture {
         let session = pool.CreateCaptureSession(&item)?;
         // Windows 10 2004+; eskilerde yok, önemli değil.
         let _ = session.SetIsCursorCaptureEnabled(false);
+        // Windows 11: yakalanan pencerenin (oyunun) etrafındaki sarı çerçeve çizilmesin. Windows
+        // 10'da yok; çerçeve kalır ama yakalama çalışır.
+        let _ = session.SetIsBorderRequired(false);
         session.StartCapture()?;
 
         Ok(WindowCapture { context, device, d3d, pool, session, pool_size, staging: None, software, last: None })

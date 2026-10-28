@@ -10,15 +10,17 @@
   let index = 0;
   const tv = { phase: "prepare", found: [], selected: "", log: [], error: "", busy: false };
 
-  const usesTv = () => settings.output === "tv" || settings.output === "both";
+  const pcGame = () => settings.source === "pcGame";
+  const usesTv = () => !pcGame() && (settings.output === "tv" || settings.output === "both");
 
   // Adımlar: `when` yanlışsa atlanır.
   const steps = [
     { id: "welcome", render: renderWelcome },
     { id: "screen", when: () => status.platform === "macos", render: renderScreenPermission },
-    { id: "remote", render: renderRemotePlay },
+    { id: "remote", when: () => !pcGame(), render: renderRemotePlay },
+    { id: "game", when: pcGame, render: renderGame },
     { id: "tv", when: usesTv, render: renderTv },
-    { id: "controller", render: renderController },
+    { id: "controller", when: () => !pcGame(), render: renderController },
     { id: "translate", render: renderTranslate },
     { id: "done", render: renderDone },
   ];
@@ -74,16 +76,32 @@
       el(
         "label",
         { class: "option" },
-        el("input", { type: "radio", name: "w-output", value, checked: settings.output === value, onchange: () => { settings.output = value; render(); } }),
+        el("input", {
+          type: "radio",
+          name: "w-output",
+          value,
+          checked: value === "pc" ? pcGame() : !pcGame() && settings.output === value,
+          onchange: () => {
+            Object.assign(settings, value === "pc" ? { source: "pcGame", output: "screen" } : { source: "remotePlay", output: value });
+            render();
+          },
+        }),
         el("span", {}, el("strong", {}, title), el("small", {}, detail)),
       );
+    const pcChoice = status.gameSource
+      ? [
+          el("p", { class: "question" }, "Ya da bu bilgisayarda mı oynuyorsunuz?"),
+          choice("pc", "Bu bilgisayarda yüklü bir oyunda", "Steam, Epic vb. ile bu bilgisayarda oynadığınız oyun. PS5 gerekmez; çeviriler oyunun üstünde gösterilir."),
+        ]
+      : [];
     return [
       el("h2", { class: "title" }, "Hoş geldiniz"),
-      el("p", {}, "Anlık Çeviri, PS5'te oynadığınız oyundaki İngilizce yazıları okuyup Türkçesini yazının tam üstünde gösterir. Birkaç adımda kuralım."),
-      el("p", { class: "question" }, "Çevirileri nerede görmek istersiniz?"),
+      el("p", {}, "Anlık Çeviri, oynadığınız oyundaki İngilizce yazıları okuyup Türkçesini yazının tam üstünde gösterir. Birkaç adımda kuralım."),
+      el("p", { class: "question" }, status.gameSource ? "PS5'te oynuyorsanız çevirileri nerede görmek istersiniz?" : "Çevirileri nerede görmek istersiniz?"),
       choice("tv", "TV'de", "Oyunu TV'den izliyorsanız. TV'nin Android TV ya da Google TV olması gerekir."),
       choice("screen", "Bu bilgisayarın ekranında", "Oyunu bilgisayardan (Remote Play penceresinden) oynuyorsanız. Her TV ile çalışır."),
       choice("both", "İkisinde de", ""),
+      ...pcChoice,
       nav({ back: false }),
     ];
   }
@@ -131,6 +149,57 @@
         button("Tekrar kontrol et", async () => { status = await invoke("setup_status"); render(); }, "ghost"),
       ),
       nav({ next: open ? "Devam" : "Sonra yaparım" }),
+    ];
+  }
+
+  // 3 — PC oyunu: oyun penceresini seç
+  const game = { windows: null, busy: false, error: "" };
+
+  async function loadGames() {
+    game.busy = true;
+    game.error = "";
+    render();
+    try {
+      game.windows = await invoke("list_windows");
+    } catch (error) {
+      game.windows = [];
+      game.error = String(error);
+    }
+    game.busy = false;
+    render();
+  }
+
+  function renderGame() {
+    if (game.windows === null && !game.busy) setTimeout(loadGames);
+    const windows = game.windows ?? [];
+    const options = windows.map((w) =>
+      el(
+        "label",
+        { class: "option" },
+        el("input", { type: "radio", name: "w-game", value: w.exe, checked: settings.window === w.exe, onchange: () => { settings.window = w.exe; render(); } }),
+        el("span", {}, el("strong", {}, w.title), el("small", {}, `${w.exe} · ${w.width}×${w.height}`)),
+      ),
+    );
+    const savedClosed = settings.window && !windows.some((w) => w.exe === settings.window);
+    return [
+      el("h2", { class: "title" }, "Oyunu seçin"),
+      el("p", {}, "Oyunu açın (ana menüye gelmesi yeter), sonra aşağıdaki listeden seçin."),
+      game.busy ? el("p", { class: "help" }, "Pencereler aranıyor…") : null,
+      !game.busy && windows.length === 0 ? statusLine(false, "Ekranda oyun penceresi bulunamadı.", true) : null,
+      el("div", { class: "options" }, options),
+      savedClosed ? statusLine(true, `Seçili: ${settings.window} (şu an açık değil)`) : null,
+      game.error ? el("p", { class: "error-inline" }, game.error) : null,
+      el("div", { class: "row" }, button("Listeyi yenile", loadGames, "ghost", game.busy)),
+      el(
+        "p",
+        { class: "help" },
+        "Oyunun grafik ayarlarında ekran modunu ",
+        el("strong", {}, "Kenarlıksız pencere"),
+        " (Borderless) ya da ",
+        el("strong", {}, "Pencere"),
+        " yapın. \"Tam ekran\" (özel tam ekran) modunda çeviriler oyunun üstünde görünmeyebilir.",
+      ),
+      nav({ next: settings.window ? "Devam" : "Sonra seçerim" }),
     ];
   }
 
@@ -393,11 +462,24 @@
 
   // 7 — Bitti
   function renderDone() {
-    const where = { tv: "TV'de", screen: "bu ekranda", both: "TV'de ve bu ekranda" }[settings.output];
+    const where = pcGame() ? "oyunun üstünde" : { tv: "TV'de", screen: "bu ekranda", both: "TV'de ve bu ekranda" }[settings.output];
     return [
       el("h2", { class: "title" }, "Hazır"),
       el("p", {}, `Çeviriler ${where} gösterilecek (${{ local: "yerel model", deepl: "DeepL", test: "çevirisiz test modu" }[settings.translate ? settings.engine : "test"]}).`),
-      el("p", {}, "Remote Play açıkken ana ekrandaki ", el("strong", {}, "Başlat"), "a basın. İlk açılışta yazı tanıma modeli ~30 saniyede yüklenir."),
+      pcGame()
+        ? el("p", {}, "Oyun açıkken ana ekrandaki ", el("strong", {}, "Başlat"), "a basın.")
+        : el("p", {}, "Remote Play açıkken ana ekrandaki ", el("strong", {}, "Başlat"), "a basın. İlk açılışta yazı tanıma modeli ~30 saniyede yüklenir."),
+      pcGame()
+        ? el(
+            "p",
+            { class: "help" },
+            "Oyun içindeyken ",
+            el("kbd", {}, "Ctrl+Shift+T"),
+            " çevirileri gizler/gösterir. Ekranda çok yazı varsa ",
+            el("kbd", {}, "Ctrl+Shift+R"),
+            " ile yalnızca bir bölgeyi (ör. altyazı bandı) okutun.",
+          )
+        : null,
       el("p", { class: "help" }, "Bu sihirbazı Ayarlar'dan istediğiniz zaman yeniden açabilirsiniz."),
       finishError ? el("p", { class: "error-inline" }, finishError) : null,
       el(
@@ -447,6 +529,7 @@
       index = 0;
       Object.assign(tv, { phase: "prepare", found: [], selected: settings.tvAddress ?? "", log: [], error: "", busy: false });
       Object.assign(model, { busy: false, percent: 0, note: "", ok: false });
+      Object.assign(game, { windows: null, busy: false, error: "" });
       document.getElementById("app-main").hidden = true;
       document.getElementById("wizard").hidden = false;
       render();

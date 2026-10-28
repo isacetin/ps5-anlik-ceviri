@@ -11,7 +11,7 @@ use windows::Win32::System::Threading::{
 };
 use windows::Win32::UI::HiDpi::{GetDpiForWindow, SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2};
 use windows::Win32::UI::WindowsAndMessaging::{
-    EnumWindows, GetWindowTextW, GetWindowThreadProcessId, IsIconic, IsWindowVisible,
+    EnumWindows, GetClientRect, GetWindowTextW, GetWindowThreadProcessId, IsIconic, IsWindowVisible, SetForegroundWindow,
 };
 
 #[derive(Clone, Debug)]
@@ -23,6 +23,8 @@ pub struct WindowInfo {
     pub frame: RECT,
     /// Pencerenin üstünden istemci alanına kadar olan yükseklik (başlık çubuğu), piksel.
     pub top_inset: i32,
+    /// İstemci alanı (oyunun çizdiği yer; başlık çubuğu ve kenarlar hariç), ekran pikseli.
+    pub client: RECT,
     pub minimized: bool,
 }
 
@@ -33,6 +35,11 @@ impl WindowInfo {
 
     pub fn height(&self) -> i32 {
         self.frame.bottom - self.frame.top
+    }
+
+    /// Pencere başlığında ya da exe adında `filter` (küçük harf) geçiyor mu?
+    pub fn matches(&self, filter: &str) -> bool {
+        self.title.to_lowercase().contains(filter) || self.exe.to_lowercase().contains(filter)
     }
 
     /// PS Remote Play penceresi mi? (exe: RemotePlay.exe, başlık: "PS Remote Play")
@@ -50,6 +57,19 @@ pub fn scale_factor(window: &WindowInfo) -> f64 {
         1.0
     } else {
         dpi as f64 / 96.0
+    }
+}
+
+/// İstemci alanının ekrandaki yeri, fiziksel piksel (overlay ile aynı birim).
+pub fn client_screen(window: &WindowInfo) -> ceviri_core::Rect {
+    let c = window.client;
+    ceviri_core::Rect::new(c.left as f64, c.top as f64, (c.right - c.left) as f64, (c.bottom - c.top) as f64)
+}
+
+/// Pencereyi öne getirir (klavye ona gider). Windows yalnızca öndeki uygulamanın bunu yapmasına izin verir.
+pub fn focus(window: &WindowInfo) {
+    unsafe {
+        let _ = SetForegroundWindow(window.hwnd);
     }
 }
 
@@ -80,6 +100,13 @@ pub fn os_version() -> String {
     }
     let name = if info.dwBuildNumber >= 22000 { "Windows 11" } else { "Windows 10" };
     format!("{name} ({}.{}.{})", info.dwMajorVersion, info.dwMinorVersion, info.dwBuildNumber)
+}
+
+/// Başlığında ya da exe adında `filter` geçen en büyük pencere (oyunun başlatıcısı ya da açılış
+/// ekranı değil, kendisi).
+pub fn find_window(filter: &str) -> Option<WindowInfo> {
+    let filter = filter.to_lowercase();
+    visible_windows().into_iter().filter(|w| w.matches(&filter)).max_by_key(|w| (!w.minimized, w.width() as i64 * w.height() as i64))
 }
 
 /// Ekranda görünen, gizlenmemiş, 100 px'den büyük üst düzey pencereler.
@@ -120,13 +147,15 @@ fn window_info(hwnd: HWND) -> Option<WindowInfo> {
 
         // İstemci alanının sol üst köşesi ekranda nerede: pencere üstüyle farkı başlık çubuğudur.
         let mut origin = POINT::default();
-        let top_inset = if ClientToScreen(hwnd, &mut origin).as_bool() {
-            (origin.y - frame.top).max(0)
+        let mut size = RECT::default();
+        let (top_inset, client) = if ClientToScreen(hwnd, &mut origin).as_bool() && GetClientRect(hwnd, &mut size).is_ok() {
+            let client = RECT { left: origin.x, top: origin.y, right: origin.x + size.right, bottom: origin.y + size.bottom };
+            ((origin.y - frame.top).max(0), client)
         } else {
-            0
+            (0, frame)
         };
 
-        Some(WindowInfo { hwnd, title, exe: process_name(hwnd), frame, top_inset, minimized })
+        Some(WindowInfo { hwnd, title, exe: process_name(hwnd), frame, top_inset, client, minimized })
     }
 }
 

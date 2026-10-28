@@ -13,6 +13,10 @@ yazının **tam üstünde** gösterir: TV'de ya da bilgisayar ekranında.
 Oyunu her zamanki gibi TV'den, gecikmesiz izlersiniz. Bilgisayar aynı görüntüyü PS Remote Play
 üzerinden okur, yazıları bulup çevirir ve TV'ye (ya da kendi ekranına) gönderir.
 
+**Windows'ta PC oyunları da çevrilir:** Steam, Epic vb. ile bilgisayarda oynadığınız oyunlarda PS5
+gerekmez; yazılar doğrudan oyun penceresinden okunur ve çeviri oyunun üstünde gösterilir
+([ayrıntılar](#pc-oyunları-windows)).
+
 > Geliştirme aşamasında. Mac + Vestel Android TV + PS5 ile denendi; Windows sürümü henüz gerçek bir
 > bilgisayarda denenmedi.
 
@@ -27,7 +31,7 @@ Oyunu her zamanki gibi TV'den, gecikmesiz izlersiniz. Bilgisayar aynı görünt�
 
 ## Neler gerekiyor?
 
-- **PS5** ve ücretsiz **PS Remote Play** uygulaması
+- **PS5** ve ücretsiz **PS Remote Play** uygulaması (PC oyunlarında gerekmez)
 - **Mac** (macOS 15 ya da üstü, Apple Silicon) veya **Windows 10/11** bilgisayar
 - Çeviriyi TV'de görmek için **Android TV / Google TV** (ör. Vestel, TCL, Philips, Sony).
   Samsung ve LG TV'lerde çeviri bilgisayar ekranında gösterilir.
@@ -81,6 +85,27 @@ Uygulama ilk açıldığında **kurulum sihirbazı** her şeyi adım adım yapt�
 adlar (oyun, karakter, yer adları), çeviriyi yerel modelin mi DeepL'in mi yapacağı, çevirisiz test
 modu ve okuma hızı. Kurulum sihirbazı da buradan yeniden açılır.
 
+### PC oyunları (Windows)
+
+Bilgisayarda yüklü oyunlar (Steam, Epic, Xbox uygulaması vb.) PS5'ten bağımsız çevrilir:
+
+1. Oyunu açın. Oyunun grafik ayarlarında ekran modunu **Kenarlıksız pencere** (Borderless) ya da
+   **Pencere** yapın; "Tam ekran" (özel tam ekran) modunda çeviriler oyunun üstünde görünmez.
+2. Anlık Çeviri'de sihirbazın ilk adımında **"Bu bilgisayarda yüklü bir oyunda"**yı seçin (ya da
+   Ayarlar → **Ne oynuyorsunuz?**) ve listeden oyunun penceresini seçin.
+3. **Başlat**'a basıp oyuna dönün. Çeviriler İngilizce yazıların üstünde görünür.
+
+Oyun içindeyken:
+
+| Kısayol | Ne yapar |
+|---|---|
+| <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>T</kbd> | Çevirileri gizler / geri getirir |
+| <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>R</kbd> | Okunacak bölgeyi seçtirir: fareyle bir dikdörtgen çizin (ör. altyazı bandı). Esc vazgeçer, sağ tık tüm ekrana döner. |
+
+Bölge seçmek, arayüzü kalabalık oyunlarda yalnızca altyazının çevrilmesini sağlar ve okumayı
+hızlandırır. Bölge her oyun için ayrı saklanır; Ayarlar'dan da seçilip temizlenebilir. Kısayollar
+yalnızca çeviri çalışırken etkindir.
+
 ### Yerel model mi, DeepL mi?
 
 | | Yerel model | DeepL |
@@ -113,6 +138,9 @@ devam eder (yalnızca güncellemek için yeniden açmanız gerekir).
 | Yazılar yanlış okunuyor | Remote Play penceresini büyütün ya da tam ekran yapın. |
 | TV'de kutular yazının üstüne tam oturmuyor | TV'nin resim formatını "Tam Piksel" ya da "Just Scan" yapın. |
 | Oyun ya da karakter adı çevriliyor | Ayarlar → **Çevrilmeyecek adlar**'a ekleyin. |
+| PC oyununda "Oyun görüntüsü alınamıyor (kare siyah)" | Oyunun ekran modunu "Kenarlıksız pencere" ya da "Pencere" yapın. |
+| PC oyunu listede yok | Oyun açık ve simge durumunda değil mi? Listedeki **Yenile**'ye basın. |
+| PC oyununda ekran yazıyla doluyor | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>R</kbd> ile yalnızca altyazı bandını seçin. |
 | "DeepL: kota doldu" | Aylık 500.000 karakter bitti; yeni ayda açılır. Bu arada Ayarlar'dan yerel modele geçebilirsiniz. |
 | "Yerel çeviri modeli indirilmemiş" | Ayarlar → **Yerel çeviri modeli** → İndir. İndirme yarıda kalırsa tekrar basın; kaldığı dosyadan devam eder. |
 
@@ -123,6 +151,8 @@ devam eder (yalnızca güncellemek için yeniden açmanız gerekir).
 - Oyun logolarındaki süslü yazılar bazen yanlış okunur.
 - Mac'te Remote Play **tam ekrandayken** bilgisayar ekranı modunun çalışması henüz denenmedi.
 - Kurulum dosyaları henüz imzasızdır (yukarıdaki uyarılar).
+- PC oyunu modu yalnızca Windows'ta var ve henüz gerçek oyunlarda denenmedi. Özel tam ekran oyunlar,
+  bazı hile korumalı (anti-cheat) oyunlar ve korumalı pencereler yakalanamayabilir.
 
 ## Geliştiriciler
 

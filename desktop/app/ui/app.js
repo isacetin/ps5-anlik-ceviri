@@ -8,6 +8,10 @@ let busy = false;
 let currentOutput = "tv";
 // Sunucudaki ayarların tamamı; form yalnızca bir kısmını düzenler (ör. setupDone formda yok).
 let savedSettings = null;
+// Bu bilgisayarda oynanan oyun okunabilir mi (yalnızca Windows).
+let gameSource = false;
+// Formda seçili kaynak: "remotePlay" | "pcGame".
+let currentSource = "remotePlay";
 
 function setLevel(dot, level) {
   $(dot).dataset.level = level;
@@ -30,6 +34,9 @@ function setState(state, detail) {
   button.disabled = busy;
   if (detail) $("state-detail").textContent = detail;
   for (const element of $("settings").elements) element.disabled = running;
+  // Bölge çalışırken de değişir: okuyucu bir sonraki turda yeni bölgeyi okur.
+  $("region-select").disabled = false;
+  $("region-clear").disabled = false;
   if (!running) {
     setLevel("tv-dot", "idle");
     $("tv-value").textContent = usesTv(currentOutput) ? "Bağlı değil" : "Kullanılmıyor";
@@ -37,9 +44,65 @@ function setState(state, detail) {
     $("window-value").textContent = "—";
     $("stats").hidden = true;
     renderShown([]);
-    $("state-detail").textContent = "PS Remote Play'i açıp PS5'e bağlandıktan sonra başlatın.";
+    $("state-detail").textContent = idleDetail();
   }
 }
+
+const isPcGame = () => currentSource === "pcGame";
+const idleDetail = () => (isPcGame() ? "Oyunu açtıktan sonra başlatın." : "PS Remote Play'i açıp PS5'e bağlandıktan sonra başlatın.");
+
+// Kaynağa göre formun görünen kısmı: PC oyununda TV ve Remote Play pencere alanı yoktur.
+function renderSource(source) {
+  currentSource = source;
+  const pc = isPcGame();
+  $("source-field").hidden = !gameSource;
+  $("game-fields").hidden = !pc;
+  $("output-field").hidden = pc;
+  $("window-field").hidden = pc;
+  $("tv-address-field").hidden = pc || !usesTv(document.querySelector('input[name="output"]:checked')?.value ?? currentOutput);
+  $("window-label").textContent = pc ? "Oyun" : "Remote Play";
+  if (!running) {
+    $("state-detail").textContent = idleDetail();
+    $("tv-value").textContent = !pc && usesTv(currentOutput) ? "Bağlı değil" : "Kullanılmıyor";
+  }
+  if (pc && !gameWindows) loadGameWindows();
+}
+
+// Oyun penceresi listesi; kayıtlı oyun açık değilse de seçili kalır.
+let gameWindows = null;
+
+async function loadGameWindows() {
+  const note = $("game-note");
+  try {
+    gameWindows = await invoke("list_windows");
+    note.textContent = gameWindows.length ? "" : "Ekranda oyun penceresi bulunamadı. Oyunu açıp Yenile'ye basın.";
+    note.className = "note";
+  } catch (error) {
+    gameWindows = [];
+    note.className = "note bad";
+    note.textContent = String(error);
+  }
+  renderGameWindows($("game-window").value || savedSettings?.window || "");
+}
+
+function renderGameWindows(selected) {
+  const select = $("game-window");
+  const option = (value, text) => Object.assign(document.createElement("option"), { value, textContent: text });
+  const options = [option("", "— Oyunu seçin —")];
+  for (const w of gameWindows ?? []) options.push(option(w.exe, `${w.title} — ${w.exe}`));
+  if (selected && !(gameWindows ?? []).some((w) => w.exe === selected)) options.push(option(selected, `${selected} (şu an açık değil)`));
+  select.replaceChildren(...options);
+  select.value = selected;
+}
+
+function renderRegion(region) {
+  $("region-value").textContent = region
+    ? `seçili bölge (genişlik %${Math.round(region.width * 100)}, yükseklik %${Math.round(region.height * 100)})`
+    : "tüm ekran";
+  $("region-clear").hidden = !region;
+}
+
+const regionKey = (settings) => settings.window.trim().toLowerCase();
 
 function renderShown(texts) {
   const list = $("shown");
@@ -65,6 +128,9 @@ const modeOf = (settings) => (settings.translate ? settings.engine : "test");
 function renderSettings(settings) {
   savedSettings = settings;
   currentOutput = settings.output;
+  for (const radio of document.querySelectorAll('input[name="source"]')) {
+    radio.checked = radio.value === settings.source;
+  }
   for (const radio of document.querySelectorAll('input[name="output"]')) {
     radio.checked = radio.value === settings.output;
   }
@@ -78,17 +144,21 @@ function renderSettings(settings) {
   $("protected-terms").value = settings.protectedTerms.join("\n");
   $("mode-value").textContent = { local: "Türkçe (yerel model)", deepl: "Türkçe (DeepL)", test: "Çevirisiz test" }[modeOf(settings)];
   setLevel("mode-dot", settings.translate ? "ok" : "warn");
-  if (!running) $("tv-value").textContent = usesTv(settings.output) ? "Bağlı değil" : "Kullanılmıyor";
+  renderGameWindows(settings.source === "pcGame" ? settings.window : "");
+  renderRegion(settings.source === "pcGame" ? settings.regions?.[regionKey(settings)] ?? null : null);
+  renderSource(settings.source);
 }
 
 function readSettings() {
+  const source = gameSource ? (document.querySelector('input[name="source"]:checked')?.value ?? "remotePlay") : "remotePlay";
   return {
     ...savedSettings,
+    source,
     output: document.querySelector('input[name="output"]:checked')?.value ?? "tv",
     tvAddress: $("tv-address").value.trim(),
     ...modeSettings(document.querySelector('input[name="mode"]:checked')?.value ?? "local"),
     fps: Number($("fps").value),
-    window: $("window").value.trim(),
+    window: source === "pcGame" ? $("game-window").value : $("window").value.trim(),
     protectedTerms: $("protected-terms").value.split("\n").map((t) => t.trim()).filter(Boolean),
   };
 }
@@ -113,6 +183,7 @@ function renderKey(hasKey) {
 
 async function refresh() {
   const status = await invoke("status");
+  gameSource = status.gameSource;
   renderSettings(status.settings);
   renderKey(status.hasDeeplKey);
   renderModel(status.hasLocalModel, status.localModelMb);
@@ -181,7 +252,7 @@ function onEvent({ payload: event }) {
       setLevel("window-dot", "ok");
       $("window-value").textContent = `Okunuyor (${event.video})`;
       $("stats").hidden = false;
-      $("stats").textContent = `Yakalama ${event.captureMs} ms · OCR ${event.ocrMs} ms · ${event.blocks} blok · ${event.sent} TV'de`;
+      $("stats").textContent = `Yakalama ${event.captureMs} ms · OCR ${event.ocrMs} ms · ${event.blocks} blok · ${event.sent} gösterilen`;
       break;
     case "shown":
       renderShown(event.texts);
@@ -214,6 +285,47 @@ $("toggle").addEventListener("click", async () => {
 for (const radio of document.querySelectorAll('input[name="output"]')) {
   radio.addEventListener("change", () => ($("tv-address-field").hidden = !usesTv(radio.value)));
 }
+
+for (const radio of document.querySelectorAll('input[name="source"]')) {
+  radio.addEventListener("change", () => renderSource(radio.value));
+}
+
+$("game-refresh").addEventListener("click", loadGameWindows);
+
+$("game-window").addEventListener("change", () => {
+  const key = $("game-window").value.toLowerCase();
+  renderRegion(savedSettings.regions?.[key] ?? null);
+});
+
+// Bölge seçimi kayıtlı oyun için yapılır: durmuşken önce formdaki seçim kaydedilir.
+async function regionAction(action) {
+  const note = $("game-note");
+  note.className = "note";
+  note.textContent = "";
+  try {
+    if (!running) {
+      const settings = readSettings();
+      await invoke("save_settings", { settings });
+      savedSettings = settings;
+    }
+    await action();
+  } catch (error) {
+    note.className = "note bad";
+    note.textContent = String(error);
+  }
+}
+
+$("region-select").addEventListener("click", () => regionAction(() => invoke("open_region")));
+$("region-clear").addEventListener("click", () => regionAction(() => invoke("set_region", { region: null })));
+
+listen("region", ({ payload }) => {
+  savedSettings = { ...savedSettings, regions: payload.regions };
+  renderRegion(payload.region);
+});
+
+listen("overlay-hidden", ({ payload: hidden }) => {
+  if (running) $("state-detail").textContent = hidden ? "Çeviriler gizli: Ctrl+Shift+T ile geri getirin." : "Çeviriler gösteriliyor.";
+});
 
 $("settings").addEventListener("submit", async (event) => {
   event.preventDefault();

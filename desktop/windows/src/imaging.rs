@@ -12,6 +12,25 @@ pub fn crop(image: &RgbaImage, rect: Rect) -> RgbaImage {
     imageops::crop_imm(image, x, y, w, h).to_image()
 }
 
+/// Kare neredeyse tamamen siyah mı? Özel tam ekran (exclusive fullscreen) oyunlar ve korumalı
+/// içerik yakalamada siyah gelir. Hız için seyrek bir ızgara örneklenir.
+pub fn is_mostly_black(image: &RgbaImage) -> bool {
+    const STEP: usize = 16;
+    let (w, h) = image.dimensions();
+    let (mut bright, mut total) = (0u32, 0u32);
+    for y in (0..h).step_by(STEP) {
+        for x in (0..w).step_by(STEP) {
+            let [r, g, b, _] = image.get_pixel(x, y).0;
+            total += 1;
+            if r.max(g).max(b) > 16 {
+                bright += 1;
+            }
+        }
+    }
+    // Tamamen siyah bir yükleme ekranında bile genelde birkaç piksel (logo, ipucu) parlaktır.
+    bright * 200 < total
+}
+
 /// OCR'dan önce `scale` kat büyütür/küçültür; uzun kenar `max_dimension`'ı aşmaz
 /// (Windows OCR daha büyük görüntüyü tanımaz). Oran korunduğu için normalize kutular değişmez.
 pub fn prepare_for_ocr(image: &RgbaImage, scale: f64, max_dimension: u32) -> RgbaImage {
@@ -78,6 +97,21 @@ mod tests {
 
         assert_eq!(crop(&image, Rect::new(90.0, -5.0, 50.0, 50.0)).dimensions(), (10, 50));
         assert_eq!(crop(&image, Rect::new(500.0, 500.0, 10.0, 10.0)).dimensions(), (1, 1));
+    }
+
+    #[test]
+    fn siyah_kare_taninir_altyazili_karanlik_sahne_taninmaz() {
+        let black = RgbaImage::from_pixel(640, 360, image::Rgba([3, 3, 3, 255]));
+        assert!(is_mostly_black(&black));
+
+        // Karanlık sahne, altta beyaz altyazı bandı: siyah sayılmaz.
+        let mut scene = black.clone();
+        for y in 300..330 {
+            for x in 100..540 {
+                scene.put_pixel(x, y, image::Rgba([240, 240, 240, 255]));
+            }
+        }
+        assert!(!is_mostly_black(&scene));
     }
 
     #[test]

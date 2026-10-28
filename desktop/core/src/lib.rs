@@ -21,7 +21,7 @@ pub use block_merger::{MergedBlock, TextLine};
 pub use frame_stats::FrameStats;
 pub use geometry::Rect;
 pub use protocol::{OverlayBlock, OverlayMessage};
-pub use screen::{ReadError, Reading, ScreenReader};
+pub use screen::{ReadError, Reading, ScreenReader, SharedRegion};
 pub use stabilizer::{StableBlock, Stabilizer};
 pub use terms::Terms;
 pub use translator::{TranslationError, Translator};

@@ -36,7 +36,7 @@
         </li>
         <li>
           <span class="dot" id="window-dot" data-level="idle"></span>
-          <span class="label">Remote Play</span>
+          <span class="label" id="window-label">Remote Play</span>
           <span class="value" id="window-value">—</span>
         </li>
         <li>
@@ -59,7 +59,29 @@
       <details id="settings-panel">
         <summary><h2>Ayarlar</h2></summary>
         <form id="settings" class="form">
-          <fieldset class="field">
+          <fieldset class="field" id="source-field" hidden>
+            <legend>Ne oynuyorsunuz?</legend>
+            <label class="choice"><input type="radio" name="source" value="remotePlay"> PS5'te bir oyun (PS Remote Play penceresinden)</label>
+            <label class="choice"><input type="radio" name="source" value="pcGame"> Bu bilgisayarda yüklü bir oyun (Steam, Epic vb.)</label>
+          </fieldset>
+          <div class="field" id="game-fields" hidden>
+            <label class="field">
+              <span>Oyun penceresi</span>
+              <span class="inline">
+                <select id="game-window"></select>
+                <button type="button" id="game-refresh" class="ghost">Yenile</button>
+              </span>
+            </label>
+            <small class="hint">Oyunu açın; listede yoksa Yenile'ye basın. Oyunun ekran modunu "Kenarlıksız pencere" (Borderless) ya da "Pencere" yapın; "Tam ekran"da çeviriler görünmeyebilir.</small>
+            <div class="inline region-row">
+              <span>Okunan alan: <strong id="region-value">tüm ekran</strong></span>
+              <button type="button" id="region-select" class="ghost">Bölge seç</button>
+              <button type="button" id="region-clear" class="ghost" hidden>Tüm ekran</button>
+            </div>
+            <small class="hint">Oyun içindeyken <kbd>Ctrl+Shift+T</kbd> çevirileri gizler/gösterir, <kbd>Ctrl+Shift+R</kbd> okunacak bölgeyi (ör. altyazı bandı) seçtirir.</small>
+            <p id="game-note" class="note" role="status"></p>
+          </div>
+          <fieldset class="field" id="output-field">
             <legend>Çevirileri nerede göster?</legend>
             <label class="choice"><input type="radio" name="output" value="tv"> TV'de (Android TV uygulaması, HDMI görüntünün üstü)</label>
             <label class="choice"><input type="radio" name="output" value="screen"> Bu ekranda, oyun penceresinin üstünde</label>
@@ -71,8 +93,9 @@
           </label>
           <fieldset class="field">
             <legend>Mod</legend>
-            <label class="choice"><input type="radio" name="mode" value="translate"> Türkçe çeviri (DeepL)</label>
-            <label class="choice"><input type="radio" name="mode" value="test"> Çevirisiz test: İngilizce metni yerinde gösterir, kota harcamaz</label>
+            <label class="choice"><input type="radio" name="mode" value="local"> Türkçe çeviri, yerel model: bu bilgisayarda çalışır, hızlı, ücretsiz, internetsiz</label>
+            <label class="choice"><input type="radio" name="mode" value="deepl"> Türkçe çeviri, DeepL: en iyi kalite, API anahtarı ve internet gerekir</label>
+            <label class="choice"><input type="radio" name="mode" value="test"> Çevirisiz test: İngilizce metni yerinde gösterir</label>
           </fieldset>
           <label class="field">
             <span>Hız</span>
@@ -87,7 +110,7 @@
             <textarea id="protected-terms" rows="3" spellcheck="false" placeholder="Her satıra bir ad: oyun, karakter, yer&#10;ör. It Takes Two"></textarea>
             <small class="hint">PlayStation, PS5, DualSense gibi adlar zaten çevrilmez.</small>
           </label>
-          <label class="field">
+          <label class="field" id="window-field">
             <span>Pencere</span>
             <input id="window" type="text" placeholder="Boş bırakın: PS Remote Play" autocomplete="off" spellcheck="false">
           </label>
@@ -101,6 +124,21 @@
           </div>
           <p id="maintenance-note" class="note" role="status"></p>
         </form>
+      </details>
+    </section>
+
+    <section class="card">
+      <details id="model-panel">
+        <summary><h2>Yerel çeviri modeli</h2><span id="model-badge" class="badge">—</span></summary>
+        <div class="form">
+          <p class="help">Çeviriyi bu bilgisayarda yapar: altyazı başına yaklaşık 0,1 saniye, anahtar ve kota yok, internet gerekmez. Konuşmalarda DeepL'e yakın; deyimlerde ve bazı menü terimlerinde daha zayıf. Bir kez indirilir (<span id="model-size">~241</span> MB).</p>
+          <progress id="model-progress" max="100" value="0" hidden></progress>
+          <div class="actions">
+            <button type="button" id="model-download" class="secondary">İndir</button>
+            <span id="model-note" class="note" role="status"></span>
+          </div>
+          <small class="hint">Model: OPUS-MT (Helsinki-NLP, Helsinki Üniversitesi), CC-BY 4.0 lisansıyla.</small>
+        </div>
       </details>
     </section>
 

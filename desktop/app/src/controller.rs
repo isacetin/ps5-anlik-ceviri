@@ -2,12 +2,14 @@
 //! Okuyucu ve çeviri arka ucu dışarıdan verilir; gerçekte platform okuyucusu ve yerel model ya da
 //! DeepL, testlerde sahteleri.
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use ceviri_core::{storage, OverlayBlock, ScreenReader, Terms};
+use ceviri_core::geometry::clamp_region;
+use ceviri_core::{storage, OverlayBlock, Rect, ScreenReader, SharedRegion, Terms};
 use ceviri_engine::pipeline::Backend;
 use ceviri_engine::{discovery, tv_client, Config, Event, Pipeline, TvClient};
 use serde::{Deserialize, Serialize};
@@ -34,6 +36,18 @@ impl Output {
     }
 }
 
+/// Yazıların okunduğu yer.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Source {
+    /// PS5 görüntüsü, PS Remote Play penceresinden.
+    #[default]
+    RemotePlay,
+    /// Bu bilgisayarda oynanan oyunun penceresi (PS5'ten bağımsız; yalnızca Windows). Çeviriler
+    /// her zaman bu ekranda gösterilir.
+    PcGame,
+}
+
 /// Çeviriyi kim yapar.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -57,6 +71,7 @@ impl Engine {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct Settings {
+    pub source: Source,
     pub output: Output,
     /// Boşsa TV yerel ağda aranır.
     pub tv_address: String,
@@ -64,8 +79,11 @@ pub struct Settings {
     pub translate: bool,
     pub engine: Engine,
     pub fps: f64,
-    /// Boşsa PS Remote Play. Mac'te bundle ID, Windows'ta başlıkta/exe adında geçen metin.
+    /// Boşsa PS Remote Play. Mac'te bundle ID, Windows'ta başlıkta/exe adında geçen metin. PC
+    /// oyununda zorunlu (genelde exe adı).
     pub window: String,
+    /// PC oyununda okunacak bölge, oyuna göre (`region_key`): istemci alanına göre 0...1. Yoksa tüm alan.
+    pub regions: BTreeMap<String, Rect>,
     /// Çevrilmeyecek adlar (oyun, karakter); PlayStation, PS5 vb. her zaman korunur.
     pub protected_terms: Vec<String>,
     /// İlk kurulum sihirbazı tamamlandı mı (değilse uygulama açılınca sihirbaz gösterilir).
@@ -75,12 +93,14 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Settings {
         Settings {
+            source: Source::RemotePlay,
             output: Output::Tv,
             tv_address: String::new(),
             translate: true,
             engine: Engine::Local,
             fps: 2.0,
             window: String::new(),
+            regions: BTreeMap::new(),
             protected_terms: Vec::new(),
             setup_done: false,
         }
@@ -104,6 +124,19 @@ impl Settings {
             settings.engine = Engine::Deepl;
         }
         settings
+    }
+
+    /// Bölgelerin saklandığı anahtar: seçili oyun penceresi.
+    pub fn region_key(&self) -> String {
+        self.window.trim().to_lowercase()
+    }
+
+    /// PC oyununda çeviriler hep bu ekranda gösterilir; TV kullanılmaz.
+    pub fn effective_output(&self) -> Output {
+        match self.source {
+            Source::RemotePlay => self.output,
+            Source::PcGame => Output::Screen,
+        }
     }
 
     pub fn save(&self) -> Result<(), String> {
@@ -130,7 +163,7 @@ pub enum UiEvent {
     Frame { blocks: Vec<OverlayBlock>, screen: Option<ScreenRect> },
 }
 
-/// Mantıksal birim (Mac'te nokta), origin ana ekranın sol üstü.
+/// Mac'te nokta (mantıksal birim), Windows'ta fiziksel piksel; origin ana ekranın sol üstü.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
 pub struct ScreenRect {
     pub x: f64,
@@ -140,7 +173,8 @@ pub struct ScreenRect {
 }
 
 pub type EventSink = Arc<dyn Fn(UiEvent) + Send + Sync>;
-pub type ReaderFactory = Arc<dyn Fn(&Settings) -> Result<Box<dyn ScreenReader>, String> + Send + Sync>;
+/// Okuyucuyu kurar; PC oyunu okuyucusu bölgeyi her turda paylaşılan değerden okur.
+pub type ReaderFactory = Arc<dyn Fn(&Settings, &SharedRegion) -> Result<Box<dyn ScreenReader>, String> + Send + Sync>;
 /// Çeviri arka ucunu kurar (yerel modeli yükler ya da DeepL anahtarını okur); model ya da anahtar
 /// yoksa hata.
 pub type BackendFactory = Arc<dyn Fn(Engine) -> Result<Backend, String> + Send + Sync>;
@@ -161,6 +195,8 @@ pub struct Status {
     pub has_local_model: bool,
     /// İndirilecek modelin boyutu (MB).
     pub local_model_mb: u64,
+    /// Bu bilgisayarda oynanan oyun okunabilir mi (yalnızca Windows).
+    pub game_source: bool,
 }
 
 pub struct Controller {
@@ -175,12 +211,22 @@ struct Inner {
     make_reader: ReaderFactory,
     make_backend: BackendFactory,
     caches: Caches,
+    /// Çalışan okuyucunun bölgesi; `set_region` çalışırken de değiştirir.
+    region: SharedRegion,
 }
 
 impl Controller {
     pub fn new(settings: Settings, emit: EventSink, make_reader: ReaderFactory, make_backend: BackendFactory, caches: Caches) -> Controller {
         Controller {
-            inner: Arc::new(Inner { settings: Mutex::new(settings), running: Mutex::new(None), emit, make_reader, make_backend, caches }),
+            inner: Arc::new(Inner {
+                settings: Mutex::new(settings),
+                running: Mutex::new(None),
+                emit,
+                make_reader,
+                make_backend,
+                caches,
+                region: SharedRegion::default(),
+            }),
         }
     }
 
@@ -191,6 +237,7 @@ impl Controller {
             has_deepl_key: storage::deepl_key().is_some(),
             has_local_model: storage::local_model_dir().is_some_and(|dir| ceviri_opus::model::is_installed(&dir)),
             local_model_mb: ceviri_opus::model::total_size().div_ceil(1_000_000),
+            game_source: ceviri_platform::GAME_SOURCE_SUPPORTED,
         }
     }
 
@@ -201,6 +248,29 @@ impl Controller {
         }
         *self.inner.settings.lock().unwrap() = settings;
         Ok(())
+    }
+
+    /// Seçili oyunun bölgesi (yoksa tüm alan).
+    pub fn region(&self) -> Option<Rect> {
+        let settings = self.inner.settings.lock().unwrap();
+        settings.regions.get(&settings.region_key()).copied()
+    }
+
+    /// Seçili oyunun bölgesini değiştirir (`None`: tüm alan). Çalışırken de olur: okuyucu bir
+    /// sonraki turda yeni bölgeyi okur. Kaydedilecek güncel ayarları döner.
+    pub fn set_region(&self, region: Option<Rect>) -> Result<Settings, String> {
+        let mut settings = self.inner.settings.lock().unwrap();
+        let key = settings.region_key();
+        if key.is_empty() {
+            return Err("Önce oyun penceresini seçin.".into());
+        }
+        let region = region.and_then(clamp_region);
+        match region {
+            Some(region) => settings.regions.insert(key, region),
+            None => settings.regions.remove(&key),
+        };
+        *self.inner.region.lock().unwrap() = region;
+        Ok(settings.clone())
     }
 
     /// İş hattını kendi thread'inde başlatır ve hemen döner; ilerleme olaylarla bildirilir.
@@ -239,7 +309,13 @@ impl Inner {
         let settings = self.settings.lock().unwrap().clone();
         let state = |state: &str, detail: &str| (self.emit)(UiEvent::State { state: state.into(), detail: detail.into() });
 
-        let address = if !settings.output.tv() {
+        let output = settings.effective_output();
+        if settings.source == Source::PcGame && settings.region_key().is_empty() {
+            return Err("Oyun penceresi seçilmemiş. Ayarlar'dan oyunu seçin (oyun açıkken listede görünür).".into());
+        }
+        *self.region.lock().unwrap() = settings.regions.get(&settings.region_key()).copied();
+
+        let address = if !output.tv() {
             None
         } else if settings.tv_address.trim().is_empty() {
             state("starting", "TV yerel ağda aranıyor…");
@@ -272,13 +348,13 @@ impl Inner {
         }
 
         state("starting", "Ekran okuma hazırlanıyor…");
-        let reader = (self.make_reader)(&settings)?;
+        let reader = (self.make_reader)(&settings, &self.region)?;
         let detail = if settings.translate { format!("Türkçe çeviri ({})", settings.engine.label()) } else { "Çevirisiz test modu".into() };
         state("running", &detail);
 
         let emit = self.emit.clone();
         let tv_url = address.as_ref().map(|a| format!("ws://{a}")).unwrap_or_default();
-        let screen_output = settings.output.screen();
+        let screen_output = output.screen();
         let mut pipeline = Pipeline::new(reader, address.map(TvClient::new), config).with_stop(stop);
         pipeline.run(move |event| {
             let ui = match event {
@@ -351,7 +427,7 @@ mod tests {
         let emit: EventSink = Arc::new(move |event| {
             let _ = sender.lock().unwrap().send(event);
         });
-        let make_reader: ReaderFactory = Arc::new(|_| Ok(Box::new(FakeReader)));
+        let make_reader: ReaderFactory = Arc::new(|_, _| Ok(Box::new(FakeReader)));
         (Controller::new(settings, emit, make_reader, backend, Caches::default()), events)
     }
 
@@ -460,6 +536,61 @@ mod tests {
     }
 
     #[test]
+    fn pc_oyununda_tv_kullanilmaz_ve_bolge_okuyucuya_gider() {
+        let band = Rect::new(0.0, 0.7, 1.0, 0.3);
+        let settings = Settings {
+            source: Source::PcGame,
+            output: Output::Tv,
+            translate: false,
+            fps: 20.0,
+            window: "EldenRing.exe".into(),
+            regions: BTreeMap::from([("eldenring.exe".to_string(), band)]),
+            ..Settings::default()
+        };
+        let (sender, events) = mpsc::channel();
+        let sender = Mutex::new(sender);
+        let emit: EventSink = Arc::new(move |event| {
+            let _ = sender.lock().unwrap().send(event);
+        });
+        let seen_region = Arc::new(Mutex::new(None));
+        let log = seen_region.clone();
+        let make_reader: ReaderFactory = Arc::new(move |settings, region| {
+            assert_eq!(settings.source, Source::PcGame);
+            *log.lock().unwrap() = Some(region.clone());
+            Ok(Box::new(FakeReader))
+        });
+        let controller = Controller::new(settings, emit, make_reader, no_backend(), Caches::default());
+
+        controller.start().unwrap();
+        let seen = wait_for(&events, |e| matches!(e, UiEvent::Frame { blocks, .. } if !blocks.is_empty()));
+        assert!(!seen.iter().any(|e| matches!(e, UiEvent::Tv { .. })), "PC oyununda TV aranmamalı");
+        let region = seen_region.lock().unwrap().clone().expect("okuyucu kurulmalı");
+        assert_eq!(*region.lock().unwrap(), Some(band));
+
+        // Çalışırken bölge değişir; okuyucunun gördüğü değer de.
+        let saved = controller.set_region(Some(Rect::new(0.25, 0.75, 0.5, 0.125))).unwrap();
+        assert_eq!(*region.lock().unwrap(), Some(Rect::new(0.25, 0.75, 0.5, 0.125)));
+        assert_eq!(saved.regions["eldenring.exe"], Rect::new(0.25, 0.75, 0.5, 0.125));
+        // Çok küçük bölge ya da `None`: tüm alan.
+        assert!(controller.set_region(Some(Rect::new(0.5, 0.5, 0.001, 0.001))).unwrap().regions.is_empty());
+        assert_eq!(*region.lock().unwrap(), None);
+        assert_eq!(controller.region(), None);
+        controller.stop();
+    }
+
+    #[test]
+    fn pc_oyununda_pencere_secilmeden_baslamaz() {
+        let settings = Settings { source: Source::PcGame, translate: false, ..Settings::default() };
+        let (controller, events) = controller(settings, no_backend());
+
+        controller.start().unwrap();
+        let seen = wait_for(&events, |e| matches!(e, UiEvent::State { state, .. } if state == "stopped"));
+
+        assert!(seen.iter().any(|e| matches!(e, UiEvent::Error { message } if message.starts_with("Oyun penceresi seçilmemiş"))));
+        assert!(controller.set_region(None).is_err());
+    }
+
+    #[test]
     fn calisirken_ayar_degismez() {
         let (address, _messages) = fake_tv();
         let settings = Settings { tv_address: address, translate: false, fps: 20.0, ..Settings::default() };
@@ -483,6 +614,11 @@ mod tests {
         let both: Settings = serde_json::from_str(r#"{"output":"both"}"#).unwrap();
         assert_eq!(both.output, Output::Both);
         assert_eq!(serde_json::to_value(Settings::default()).unwrap()["engine"], "local");
+        // Kaynak eklenmeden önceki ayarlar Remote Play'de kalır.
+        assert_eq!(settings.source, Source::RemotePlay);
+        let game: Settings = serde_json::from_str(r#"{"source":"pcGame","window":"game.exe","regions":{"game.exe":{"x":0,"y":0.7,"width":1,"height":0.3}}}"#).unwrap();
+        assert_eq!(game.source, Source::PcGame);
+        assert_eq!(game.regions["game.exe"], Rect::new(0.0, 0.7, 1.0, 0.3));
     }
 
     #[test]

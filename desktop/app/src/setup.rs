@@ -34,6 +34,8 @@ pub struct SetupStatus {
     /// İndirilecek modelin boyutu (MB).
     local_model_mb: u64,
     setup_done: bool,
+    /// Bu bilgisayarda oynanan oyun okunabilir mi (yalnızca Windows).
+    game_source: bool,
 }
 
 #[derive(Serialize)]
@@ -72,6 +74,7 @@ pub async fn setup_status(controller: State<'_, Controller>) -> Result<SetupStat
             has_local_model: storage::local_model_dir().is_some_and(|dir| ceviri_opus::model::is_installed(&dir)),
             local_model_mb: ceviri_opus::model::total_size().div_ceil(1_000_000),
             setup_done,
+            game_source: ceviri_platform::GAME_SOURCE_SUPPORTED,
         }
     })
     .await

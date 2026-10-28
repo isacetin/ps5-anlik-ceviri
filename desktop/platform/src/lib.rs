@@ -2,7 +2,7 @@
 //! `ceviri-windows`. Komut satırı aracı ve masaüstü uygulaması bunu kullanır; iş hattı yalnızca
 //! `ScreenReader`'ı görür.
 
-use ceviri_core::ScreenReader;
+use ceviri_core::{Rect, ScreenReader, SharedRegion};
 
 pub struct Window {
     pub app: String,
@@ -48,6 +48,9 @@ pub fn open_privacy_settings(page: &str) -> Result<(), String> {
         Err("Bu işletim sisteminde gizlilik izni gerekmiyor".into())
     }
 }
+
+/// Bu bilgisayarda oynanan oyunun okunması (PS5'ten bağımsız) yalnızca Windows'ta var.
+pub const GAME_SOURCE_SUPPORTED: bool = cfg!(windows);
 
 /// PS Remote Play penceresi ekranda mı?
 pub fn remote_play_open() -> Result<bool, String> {
@@ -104,6 +107,9 @@ pub fn run(job: impl FnOnce() -> Result<(), String> + Send + 'static) -> ! {
     }
 }
 
+#[cfg(not(windows))]
+const GAME_UNSUPPORTED: &str = "Bilgisayarda oynanan oyunların çevirisi şimdilik yalnızca Windows'ta var.";
+
 #[cfg(target_os = "macos")]
 mod imp {
     use super::*;
@@ -112,6 +118,16 @@ mod imp {
     pub fn screen_reader(app: Option<&str>, fps: f64, title_bar: Option<f64>) -> Result<Box<dyn ScreenReader>, String> {
         Ok(Box::new(MacScreenReader::new(app.unwrap_or(REMOTE_PLAY_BUNDLE_ID), fps, title_bar)?))
     }
+
+    pub fn game_reader(_window: &str, _region: SharedRegion) -> Result<Box<dyn ScreenReader>, String> {
+        Err(GAME_UNSUPPORTED.into())
+    }
+
+    pub fn game_client_area(_window: &str) -> Option<Rect> {
+        None
+    }
+
+    pub fn focus_game(_window: &str) {}
 
     pub fn list_windows() -> Result<Vec<Window>, String> {
         Ok(ceviri_mac::list_windows()?
@@ -129,6 +145,25 @@ mod imp {
     /// Windows'ta `app`, pencere başlığında ya da exe adında aranan metindir; `title_bar` piksel.
     pub fn screen_reader(app: Option<&str>, _fps: f64, title_bar: Option<f64>) -> Result<Box<dyn ScreenReader>, String> {
         Ok(Box::new(WindowsScreenReader::new(app, title_bar, 1.0)?))
+    }
+
+    /// Bu bilgisayarda oynanan oyun: `window` başlıkta ya da exe adında aranır, istemci alanı okunur.
+    pub fn game_reader(window: &str, region: SharedRegion) -> Result<Box<dyn ScreenReader>, String> {
+        Ok(Box::new(WindowsScreenReader::game(window, region)?))
+    }
+
+    /// Oyun penceresinin istemci alanının ekrandaki yeri (fiziksel piksel, `Reading.screen` gibi);
+    /// pencere yoksa `None`.
+    pub fn game_client_area(window: &str) -> Option<Rect> {
+        win::find_window(window).filter(|w| !w.minimized).map(|w| win::client_screen(&w))
+    }
+
+    /// Oyun penceresini öne getirir (bölge seçildikten sonra klavye oyuna dönsün).
+    pub fn focus_game(window: &str) {
+        // Boş metin her pencereye uyar.
+        if let Some(window) = win::find_window(window).filter(|_| !window.is_empty()) {
+            win::focus(&window);
+        }
     }
 
     pub fn list_windows() -> Result<Vec<Window>, String> {
@@ -149,9 +184,19 @@ mod imp {
         Err(UNSUPPORTED.into())
     }
 
+    pub fn game_reader(_window: &str, _region: SharedRegion) -> Result<Box<dyn ScreenReader>, String> {
+        Err(GAME_UNSUPPORTED.into())
+    }
+
+    pub fn game_client_area(_window: &str) -> Option<Rect> {
+        None
+    }
+
+    pub fn focus_game(_window: &str) {}
+
     pub fn list_windows() -> Result<Vec<Window>, String> {
         Err(UNSUPPORTED.into())
     }
 }
 
-pub use imp::{list_windows, screen_reader};
+pub use imp::{focus_game, game_client_area, game_reader, list_windows, screen_reader};

@@ -1,30 +1,44 @@
 //! Windows ekran okuyucu: Mac'teki Swift `ScreenReader`'ın karşılığı.
-//! Pencereyi bul → yakalama oturumunu açık tut → en son karenin 16:9 video alanını kes → OCR.
+//! Pencereyi bul → yakalama oturumunu açık tut → en son karenin okunacak alanını kes → OCR.
+//! Okunacak alan PS Remote Play'de 16:9 video alanı, PC oyununda pencerenin istemci alanıdır
+//! (isteğe bağlı olarak kullanıcının seçtiği bölge).
 
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-use ceviri_core::geometry::video_rect;
-use ceviri_core::{ReadError, Reading, Rect, ScreenReader};
+use ceviri_core::geometry::{client_rect, sub_rect, video_rect};
+use ceviri_core::{ReadError, Reading, Rect, ScreenReader, SharedRegion};
 use image::RgbaImage;
 use windows::Media::Ocr::OcrEngine;
+use windows::Win32::Foundation::RECT;
 
 use crate::capture::WindowCapture;
-use crate::imaging::{crop, draw_boxes, prepare_for_ocr};
+use crate::imaging::{crop, draw_boxes, is_mostly_black, prepare_for_ocr};
 use crate::{ensure_mta, ocr, win};
 
+/// Bu kadar tur üst üste siyah kare gelirse (2 fps'te ~10 sn) kullanıcı uyarılır; daha kısası
+/// yükleme ekranıdır.
+const BLACK_ROUNDS: u32 = 20;
+
+/// Neyin okunduğu.
+enum Source {
+    /// PS Remote Play (ya da `filter`'a uyan pencere): 16:9 video alanı.
+    RemotePlay { filter: Option<String>, title_bar: Option<f64> },
+    /// Bu bilgisayarda oynanan oyun: istemci alanı, varsa içindeki bölge.
+    Game { filter: String, region: SharedRegion },
+}
+
 pub struct WindowsScreenReader {
-    /// Küçük harfle başlıkta ya da exe adında aranır; `None` ise PS Remote Play.
-    window_filter: Option<String>,
-    /// Başlık çubuğu yüksekliği (fiziksel piksel); `None` ise pencereden ölçülür, tam ekranda 0.
-    title_bar: Option<f64>,
-    /// OCR'dan önce video alanının büyütme oranı (küçük yazılar için).
+    source: Source,
+    /// OCR'dan önce okunan alanın büyütme oranı (küçük yazılar için).
     ocr_scale: f64,
     engine: OcrEngine,
     max_dimension: u32,
     /// Açık yakalama oturumu ve ait olduğu pencere (HWND, sayı olarak).
     capture: Option<(isize, WindowCapture)>,
     last_video: Option<RgbaImage>,
+    /// Üst üste gelen siyah kare sayısı (yalnızca oyun modu).
+    black_rounds: u32,
 }
 
 // Tüm nesneler çok iş parçacıklı daireye (MTA) aittir: frame pool serbest iş parçacıklı,
@@ -33,7 +47,18 @@ pub struct WindowsScreenReader {
 unsafe impl Send for WindowsScreenReader {}
 
 impl WindowsScreenReader {
+    /// `window_filter`: küçük harfle başlıkta ya da exe adında aranır; `None` ise PS Remote Play.
+    /// `title_bar`: başlık çubuğu yüksekliği (fiziksel piksel); `None` ise pencereden ölçülür, tam ekranda 0.
     pub fn new(window_filter: Option<&str>, title_bar: Option<f64>, ocr_scale: f64) -> Result<WindowsScreenReader, String> {
+        Self::with_source(Source::RemotePlay { filter: window_filter.map(str::to_lowercase), title_bar }, ocr_scale)
+    }
+
+    /// Bu bilgisayarda oynanan oyun: `window` başlıkta ya da exe adında aranır.
+    pub fn game(window: &str, region: SharedRegion) -> Result<WindowsScreenReader, String> {
+        Self::with_source(Source::Game { filter: window.to_lowercase(), region }, 1.0)
+    }
+
+    fn with_source(source: Source, ocr_scale: f64) -> Result<WindowsScreenReader, String> {
         ensure_mta();
         if !crate::capture::is_supported() {
             return Err("Bu Windows sürümü pencere yakalamayı desteklemiyor (Windows 10 1903+ gerekir).".into());
@@ -43,31 +68,63 @@ impl WindowsScreenReader {
             "İngilizce OCR dili kurulu değil. Ayarlar > Zaman ve dil > Dil ve bölge > Dil ekle > English (United States).",
         )?;
         Ok(WindowsScreenReader {
-            window_filter: window_filter.map(str::to_lowercase),
-            title_bar,
+            source,
             ocr_scale: ocr_scale.clamp(0.25, 4.0),
             engine,
             max_dimension: setup.max_dimension,
             capture: None,
             last_video: None,
+            black_rounds: 0,
         })
     }
 
     fn find_window(&self) -> Result<win::WindowInfo, ReadError> {
         let windows = win::visible_windows();
-        let found = windows.into_iter().find(|w| match &self.window_filter {
-            Some(filter) => w.title.to_lowercase().contains(filter) || w.exe.to_lowercase().contains(filter),
-            None => w.looks_like_remote_play(),
-        });
-        let name = self.window_filter.as_deref().unwrap_or("PS Remote Play");
+        let (found, name, hint) = match &self.source {
+            Source::RemotePlay { filter: Some(filter), .. } => {
+                (windows.into_iter().find(|w| w.matches(filter)), filter.as_str(), "PS Remote Play açık ve PS5'e bağlı mı?")
+            }
+            Source::RemotePlay { filter: None, .. } => {
+                (windows.into_iter().find(|w| w.looks_like_remote_play()), "PS Remote Play", "PS Remote Play açık ve PS5'e bağlı mı?")
+            }
+            // Oyunlar başlatıcı, açılış ekranı gibi küçük pencereler de açar: en büyüğü oyundur.
+            Source::Game { filter, .. } => (
+                windows.into_iter().filter(|w| w.matches(filter)).max_by_key(|w| (!w.minimized, w.width() as i64 * w.height() as i64)),
+                filter.as_str(),
+                "Oyun açık mı?",
+            ),
+        };
         match found {
-            None => Err(ReadError::WindowNotFound(format!("Ekranda {name} penceresi bulunamadı. PS Remote Play açık ve PS5'e bağlı mı?"))),
+            None => Err(ReadError::WindowNotFound(format!("Ekranda {name} penceresi bulunamadı. {hint}"))),
             Some(window) if window.minimized => {
                 Err(ReadError::WindowNotFound(format!("{name} penceresi simge durumunda; simge durumundaki pencereler yakalanamaz.")))
             }
             Some(window) => Ok(window),
         }
     }
+
+    /// Yakalanan karede okunacak alan (piksel).
+    fn area(&self, window: &win::WindowInfo, image: &RgbaImage, fullscreen: bool) -> Rect {
+        let (width, height) = (image.width() as f64, image.height() as f64);
+        match &self.source {
+            Source::RemotePlay { title_bar, .. } => {
+                let scale_y = height / window.height().max(1) as f64;
+                let top_inset = title_bar.unwrap_or(if fullscreen { 0.0 } else { window.top_inset as f64 * scale_y });
+                video_rect(width, height, top_inset)
+            }
+            Source::Game { region, .. } => {
+                let client = client_rect(rect(window.frame), rect(window.client), width, height);
+                match *region.lock().unwrap() {
+                    Some(region) => sub_rect(client, region),
+                    None => client,
+                }
+            }
+        }
+    }
+}
+
+fn rect(r: RECT) -> Rect {
+    Rect::new(r.left as f64, r.top as f64, (r.right - r.left) as f64, (r.bottom - r.top) as f64)
 }
 
 impl ScreenReader for WindowsScreenReader {
@@ -100,20 +157,29 @@ impl ScreenReader for WindowsScreenReader {
         };
 
         let fullscreen = win::is_fullscreen(&window);
-        let scale_y = image.height() as f64 / window.height().max(1) as f64;
-        let top_inset = self.title_bar.unwrap_or(if fullscreen { 0.0 } else { window.top_inset as f64 * scale_y });
-        let video_px = video_rect(image.width() as f64, image.height() as f64, top_inset);
+        let video_px = self.area(&window, &image, fullscreen);
         let video = crop(&image, video_px);
         let captured = Instant::now();
 
-        // Kare pencere sınırının fiziksel piksel karşılığıdır; ekran konumu mantıksal birime çevrilir.
+        // Tüm kareye bakılır: seçili bölge (altyazı bandı) karanlık sahnede yazısızken de siyahtır.
+        if matches!(self.source, Source::Game { .. }) {
+            self.black_rounds = if is_mostly_black(&image) { self.black_rounds + 1 } else { 0 };
+            if self.black_rounds == BLACK_ROUNDS {
+                return Err(ReadError::Other(
+                    "Oyun görüntüsü alınamıyor (kare siyah). Oyunun grafik ayarlarında ekran modunu \"Kenarlıksız pencere\" (Borderless) ya da \"Pencere\" yapın; özel tam ekran yakalanamaz.".into(),
+                ));
+            }
+        }
+
+        // Kare pencere sınırının fiziksel piksel karşılığıdır; ekran konumu da fiziksel piksel
+        // (overlay öyle yerleşir; farklı ölçekli monitörlerde mantıksal birim kayardı).
         let scale_x = image.width() as f64 / window.width().max(1) as f64;
-        let dpi = win::scale_factor(&window);
+        let scale_y = image.height() as f64 / window.height().max(1) as f64;
         let screen = Rect::new(
-            (window.frame.left as f64 + video_px.x / scale_x) / dpi,
-            (window.frame.top as f64 + video_px.y / scale_y) / dpi,
-            video_px.width / scale_x / dpi,
-            video_px.height / scale_y / dpi,
+            window.frame.left as f64 + video_px.x / scale_x,
+            window.frame.top as f64 + video_px.y / scale_y,
+            video_px.width / scale_x,
+            video_px.height / scale_y,
         );
 
         let prepared = prepare_for_ocr(&video, self.ocr_scale, self.max_dimension);

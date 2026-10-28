@@ -3,6 +3,7 @@
 
 use std::fmt;
 use std::path::Path;
+use std::sync::{Arc, Mutex};
 
 use crate::block_merger::TextLine;
 use crate::geometry::Rect;
@@ -10,7 +11,8 @@ use crate::geometry::Rect;
 /// Bir tur ekran okumanın sonucu.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Reading {
-    /// 16:9 video alanına göre normalize satırlar, origin sol üst.
+    /// Okunan alana (16:9 video alanı ya da oyunun istemci alanı/bölgesi) göre normalize satırlar,
+    /// origin sol üst.
     pub lines: Vec<TextLine>,
     /// OCR'a verilen video alanının piksel boyutu.
     pub video_width: u32,
@@ -18,10 +20,14 @@ pub struct Reading {
     pub fullscreen: bool,
     pub capture_ms: u64,
     pub ocr_ms: u64,
-    /// Video alanının ekrandaki yeri: mantıksal birim (Mac'te nokta, Windows'ta DPI'a göre
-    /// ölçeklenmiş piksel), origin ana ekranın sol üstü. Ekran overlay'i buraya oturur.
+    /// Video alanının ekrandaki yeri: Mac'te nokta (mantıksal birim), Windows'ta fiziksel piksel;
+    /// origin ana ekranın sol üstü. Ekran overlay'i buraya oturur.
     pub screen: Option<Rect>,
 }
+
+/// Okunacak bölge (okunan alana göre 0...1); `None` ise tüm alan. Okuyucu her turda bakar, böylece
+/// bölge iş hattı çalışırken değiştirilebilir.
+pub type SharedRegion = Arc<Mutex<Option<Rect>>>;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ReadError {

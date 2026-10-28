@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use ceviri_core::{block_merger, storage, terms, ReadError, Stabilizer, Terms};
+use ceviri_core::{block_merger, storage, terms, ReadError, Rect, SharedRegion, Stabilizer, Terms};
 use ceviri_engine::pipeline::Backend;
 use ceviri_engine::{discovery, tv_client, Config, DeepLClient, Event, Pipeline, TvClient};
 use ceviri_opus::{model, OpusTranslator};
@@ -23,6 +23,9 @@ Kullanım:
     --once                       Tek tur çalışıp çıkar
   ceviri read [seçenekler]       TV'siz: OCR satırlarını ve sabit blokları yazar
     --count N                    Tur sayısı (varsayılan 5)
+    --oyun PENCERE               Remote Play yerine bu bilgisayardaki oyunu okur (yalnızca Windows);
+                                 PENCERE başlıkta ya da exe adında geçen metin (bkz. ceviri windows)
+    --bolge X,Y,GEN,YUK          --oyun ile: yalnızca bu bölgeyi okur (0-1, ör. 0,0.7,1,0.3)
   ceviri translate [--yerel] \"METİN\"  Tek bir metni çevirir (önbelleği kullanmaz; --yerel: yerel model)
   ceviri model-indir             Yerel çeviri modelini indirir (~241 MB)
   ceviri windows                 Ekrandaki pencereleri listeler
@@ -131,7 +134,10 @@ fn read(args: &[String]) -> Result<(), String> {
     let title_bar = option(args, "--titlebar").and_then(|v| v.parse().ok());
     let dump_dir = dump_dir(args)?;
 
-    let mut reader = platform::screen_reader(option(args, "--bundle").as_deref(), fps, title_bar)?;
+    let mut reader = match option(args, "--oyun") {
+        Some(window) => platform::game_reader(&window, SharedRegion::new(region_option(args)?.into()))?,
+        None => platform::screen_reader(option(args, "--bundle").as_deref(), fps, title_bar)?,
+    };
     let mut stabilizer = Stabilizer::new();
     let started = Instant::now();
     println!("OCR modeli ilk turda yükleniyor; ilk okuma ~30 sn sürebilir...");
@@ -140,7 +146,8 @@ fn read(args: &[String]) -> Result<(), String> {
         let round_start = Instant::now();
         match reader.read() {
             Ok(reading) => {
-                let merged = block_merger::merge(&reading.lines);
+                let aspect = reading.video_width as f64 / reading.video_height.max(1) as f64;
+                let merged = block_merger::merge_with(&reading.lines, &block_merger::Options { aspect, ..Default::default() });
                 let stable = stabilizer.update(&merged, started.elapsed().as_secs_f64());
                 println!(
                     "#{round} video {}x{}{}  yakalama {} ms  OCR {} ms  {} satır, {} blok, {} sabit",
@@ -171,6 +178,14 @@ fn read(args: &[String]) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+/// `--bolge 0,0.7,1,0.3` → normalize dikdörtgen.
+fn region_option(args: &[String]) -> Result<Option<Rect>, String> {
+    let Some(value) = option(args, "--bolge") else { return Ok(None) };
+    let parts: Vec<f64> = value.split(',').map(|p| p.trim().parse::<f64>()).collect::<Result<_, _>>().map_err(|_| format!("--bolge: sayı bekleniyordu: {value}"))?;
+    let [x, y, width, height] = parts[..] else { return Err("--bolge: dört sayı gerekir: X,Y,GENİŞLİK,YÜKSEKLİK".into()) };
+    ceviri_core::geometry::clamp_region(Rect::new(x, y, width, height)).map(Some).ok_or_else(|| format!("--bolge: bölge çok küçük: {value}"))
 }
 
 fn deepl_key() -> Result<String, String> {

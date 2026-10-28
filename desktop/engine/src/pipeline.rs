@@ -120,7 +120,10 @@ impl Pipeline {
                     }
                     waiting_for_window = false;
 
-                    let merged = block_merger::merge(&reading.lines);
+                    // PC oyunlarında alan 16:9 olmayabilir (21:9 monitör, seçilen altyazı bandı).
+                    let aspect = reading.video_width as f64 / reading.video_height.max(1) as f64;
+                    let options = block_merger::Options { aspect, ..Default::default() };
+                    let merged = block_merger::merge_with(&reading.lines, &options);
                     let stable = stabilizer.update(&merged, elapsed());
                     blocks = match &self.config.backend {
                         Some(backend) => {

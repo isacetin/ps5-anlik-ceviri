@@ -1,0 +1,98 @@
+# Windows'ta gerçek uçtan uca test: oyun yerine geçen bir pencere açılır, uygulama onu yakalayıp
+# OCR ile okur, yerel modelle çevirir ve overlay'i üstüne çizer. Kısayollar ve bölge seçimi gerçek
+# klavye/fare girdisiyle denenir; her adımın ekran görüntüsü "windows-test-sonuc" eserinde durur.
+# Elle ya da windows-test/ ile başlayan dallara gönderilince çalışır.
+name: Windows testi
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["windows-test/**"]
+
+jobs:
+  uctan-uca:
+    name: Uçtan uca (Windows)
+    runs-on: windows-latest
+    timeout-minutes: 90
+    env:
+      CEVIRI_DATA_DIR: ${{ github.workspace }}\test-veri
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop
+          key: windows-test
+
+      - name: Derle (komut satırı aracı)
+        working-directory: desktop
+        run: cargo build --release -p ceviri-cli
+      - name: Derle (uygulama, arayüz gömülü)
+        working-directory: desktop
+        run: cargo build --release -p ceviri-app --features tauri/custom-protocol
+
+      - name: Ortam
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force test-sonuc | Out-Null
+          Add-Type -AssemblyName System.Windows.Forms
+          "Ekran: $([System.Windows.Forms.Screen]::PrimaryScreen.Bounds)"
+          "Windows: $([System.Environment]::OSVersion.VersionString)"
+          Get-WindowsCapability -Online -Name "Language.OCR*" | Format-Table Name, State
+
+      - name: İngilizce OCR dili
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          $ocr = Get-WindowsCapability -Online -Name "Language.OCR~~~en-US~0.0.1.0"
+          if ($ocr.State -ne "Installed") { Add-WindowsCapability -Online -Name "Language.OCR~~~en-US~0.0.1.0" }
+
+      - name: Oyun penceresini aç
+        shell: pwsh
+        run: |
+          Start-Process powershell -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File .github\windows-test\oyun-penceresi.ps1"
+          Start-Sleep -Seconds 6
+          .\desktop\target\release\ceviri.exe windows
+
+      - name: Komut satırı - tüm pencere
+        shell: pwsh
+        run: |
+          $out = .\desktop\target\release\ceviri.exe read --oyun "Oyun Testi" --count 4 --dump test-sonuc\cli-tum 2>&1 | Out-String
+          $out | Tee-Object -FilePath test-sonuc\cli-tum.txt
+          if ($LASTEXITCODE -ne 0) { throw "ceviri read hata verdi" }
+          if ($out -notmatch "door is locked") { throw "OCR altyazıyı okumadı" }
+          if ($out -notmatch "Options") { throw "OCR menüyü okumadı" }
+
+      - name: Komut satırı - yalnızca altyazı bandı
+        shell: pwsh
+        run: |
+          $out = .\desktop\target\release\ceviri.exe read --oyun "Oyun Testi" --count 3 --bolge 0,0.65,1,0.35 --dump test-sonuc\cli-bolge 2>&1 | Out-String
+          $out | Tee-Object -FilePath test-sonuc\cli-bolge.txt
+          if ($LASTEXITCODE -ne 0) { throw "ceviri read hata verdi" }
+          if ($out -notmatch "door is locked") { throw "Bölgede altyazı okunmadı" }
+          if ($out -match "Options") { throw "Bölge dışındaki menü okundu" }
+
+      - name: Yerel çeviri modeli
+        id: model
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          .\desktop\target\release\ceviri.exe model-indir
+          if ($LASTEXITCODE -ne 0) { throw "model indirilemedi" }
+          $out = .\desktop\target\release\ceviri.exe translate --yerel "The door is locked." 2>&1 | Out-String
+          $out | Tee-Object -FilePath test-sonuc\yerel-ceviri.txt
+          if ($LASTEXITCODE -ne 0) { throw "yerel çeviri hata verdi" }
+
+      - name: Uygulama - PC oyunu modu, kısayollar, bölge seçimi
+        shell: pwsh
+        run: |
+          $translate = "${{ steps.model.outcome }}" -eq "success"
+          .\.github\windows-test\uygulama-testi.ps1 -Exe "$PWD\desktop\target\release\anlik-ceviri.exe" -Out "$PWD\test-sonuc\uygulama" -DataDir $env:CEVIRI_DATA_DIR -Translate $translate
+
+      - name: Sonuçlar
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-test-sonuc
+          path: test-sonuc
+          if-no-files-found: warn
