@@ -16,6 +16,15 @@ Oyunu her zamanki gibi TV'den, gecikmesiz izlersiniz. Bilgisayar aynı görünt�
 > Geliştirme aşamasında. Mac + Vestel Android TV + PS5 ile denendi; Windows sürümü henüz gerçek bir
 > bilgisayarda denenmedi.
 
+<table>
+  <tr>
+    <td align="center"><img src="docs/gorseller/ana-ekran.png" width="200" alt="Ana ekran: çalışırken TV bağlantısı, okunan pencere ve ekrandaki Türkçe çeviriler"><br><sub>Çalışırken</sub></td>
+    <td align="center"><img src="docs/gorseller/sihirbaz-tv.png" width="200" alt="Kurulum sihirbazı: TV uygulamasının kurulumu için TV'de açılacak ayarlar"><br><sub>Kurulum sihirbazı: TV</sub></td>
+    <td align="center"><img src="docs/gorseller/sihirbaz-ceviri.png" width="200" alt="Kurulum sihirbazı: yerel model, DeepL ya da çevirisiz seçimi ve model indirme"><br><sub>Kurulum sihirbazı: çeviri</sub></td>
+    <td align="center"><img src="docs/gorseller/ayarlar.png" width="200" alt="Ayarlar: çevirinin nerede gösterileceği, çeviri modu, çevrilmeyecek adlar"><br><sub>Ayarlar</sub></td>
+  </tr>
+</table>
+
 ## Neler gerekiyor?
 
 - **PS5** ve ücretsiz **PS Remote Play** uygulaması
@@ -34,8 +43,8 @@ indirin:
 
 | Sistem | Dosya | Boyut |
 |---|---|---|
-| Mac (Apple Silicon) | `AnlikCeviri_0.1.0_mac_aarch64.dmg` | 13 MB |
-| Windows (64 bit) | `AnlikCeviri_0.1.0_windows_x64-setup.exe` | 12 MB |
+| Mac (Apple Silicon) | `AnlikCeviri_0.2.0_mac_aarch64.dmg` | 13 MB |
+| Windows (64 bit) | `AnlikCeviri_0.2.0_windows_x64-setup.exe` | 12 MB |
 
 TV uygulaması dosyalara gömülüdür; ayrıca indirmeniz gerekmez.
 
