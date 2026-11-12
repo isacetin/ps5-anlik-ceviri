@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use ceviri_core::{block_merger, storage, terms, ReadError, Rect, SharedRegion, Stabilizer, Terms};
+use ceviri_core::{block_merger, focus, storage, terms, ReadError, Rect, SharedRegion, Stabilizer, Terms};
 use ceviri_engine::pipeline::Backend;
 use ceviri_engine::{discovery, tv_client, Config, DeepLClient, Event, Pipeline, TvClient};
 use ceviri_opus::{model, OpusTranslator};
@@ -19,6 +19,8 @@ Kullanım:
     --yerel                      DeepL yerine bilgisayardaki çeviri modelini kullanır (önce: ceviri model-indir)
     --fps N                      Saniyedeki tur (varsayılan 5, en az 1)
     --keep \"AD1,AD2\"              Çevrilmeyecek adlar (oyun, karakter); PlayStation, PS5 vb. hep korunur
+    --hepsi                      Logo, tabela dahil ekrandaki her yazıyı çevirir (varsayılan: altyazı ve menü)
+    --ustune                     Altyazı çevirisini yazının altına değil üstüne koyar
     --verbose                    Her turun süresini yazar
     --once                       Tek tur çalışıp çıkar
   ceviri read [seçenekler]       TV'siz: OCR satırlarını ve sabit blokları yazar
@@ -74,7 +76,7 @@ fn run(args: &[String]) -> Result<(), String> {
     let title_bar = option(args, "--titlebar").and_then(|v| v.parse().ok());
 
     let keep: Vec<String> = option(args, "--keep").map(|v| v.split(',').map(str::to_string).collect()).unwrap_or_default();
-    let mut config = Config { fps, dump_dir: dump_dir(args)?, once: flag(args, "--once"), terms: Terms::new(&keep), ..Config::default() };
+    let mut config = Config { fps, dump_dir: dump_dir(args)?, once: flag(args, "--once"), terms: Terms::new(&keep), focus: !flag(args, "--hepsi"), below: !flag(args, "--ustune"), ..Config::default() };
     let local = flag(args, "--yerel");
     if !dry_run && local {
         let opus = load_local()?;
@@ -160,9 +162,15 @@ fn read(args: &[String]) -> Result<(), String> {
                     merged.len(),
                     stable.len()
                 );
-                for block in &stable {
+                let kinds = focus::classify(&stable, &focus::Options { aspect, ..Default::default() });
+                for (block, kind) in stable.iter().zip(kinds) {
                     let b = block.bbox;
-                    println!("    {} [x={:.3} y={:.3} w={:.3} h={:.3}] \"{}\"", block.id, b.x, b.y, b.width, b.height, block.text);
+                    let kind = match kind {
+                        focus::Kind::Dialogue => "altyazı",
+                        focus::Kind::Menu => "menü",
+                        focus::Kind::Other => "atlanır",
+                    };
+                    println!("    {} {kind:7} [x={:.3} y={:.3} w={:.3} h={:.3}] \"{}\"", block.id, b.x, b.y, b.width, b.height, block.text);
                 }
                 if let Some(dir) = &dump_dir {
                     let boxes: Vec<_> = merged.iter().map(|m| m.bbox).collect();

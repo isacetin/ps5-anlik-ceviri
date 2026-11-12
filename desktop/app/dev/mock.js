@@ -18,6 +18,8 @@ const status = {
     translate: true,
     engine: "local",
     fps: 5,
+    focus: true,
+    subtitleBelow: true,
     window: params.has("pc") ? "Hollow.exe" : "",
     regions: params.has("pc") ? { "hollow.exe": { x: 0.1, y: 0.72, width: 0.8, height: 0.22 } } : {},
     protectedTerms: ["It Takes Two", "May", "Cody"],

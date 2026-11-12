@@ -2,13 +2,14 @@
 //! çevir (önbellek + arka planda DeepL) → TV'ye gönder. Durum ekrana yazılmaz, `Event` olarak
 //! bildirilir; komut satırı da masaüstü arayüzü de aynı döngüyü kullanır.
 
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use ceviri_core::{block_merger, language, storage, terms, translator, OverlayBlock, ReadError, Rect, ScreenReader, StableBlock, Stabilizer, Terms, TranslationError, Translator};
+use ceviri_core::{block_merger, focus, language, storage, terms, translator, OverlayBlock, ReadError, Rect, ScreenReader, StableBlock, Stabilizer, Terms, TranslationError, Translator};
 
 use crate::tv_client::TvClient;
 
@@ -29,11 +30,15 @@ pub struct Config {
     pub once: bool,
     /// Çevrilmeyecek adlar (oyun, karakter, marka).
     pub terms: Terms,
+    /// Yalnızca altyazı ve menü çevrilir; logo, tabela gibi oyun dünyası yazıları atlanır.
+    pub focus: bool,
+    /// Altyazı çevirisi orijinal yazının üstüne değil hemen altına konur (ikisi de okunur).
+    pub below: bool,
 }
 
 impl Default for Config {
     fn default() -> Config {
-        Config { fps: 5.0, backend: None, cache: Default::default(), cache_path: None, dump_dir: None, once: false, terms: Terms::new(&[]) }
+        Config { fps: 5.0, backend: None, cache: Default::default(), cache_path: None, dump_dir: None, once: false, terms: Terms::new(&[]), focus: false, below: false }
     }
 }
 
@@ -120,6 +125,8 @@ impl Pipeline {
 
             let mut blocks: Vec<OverlayBlock> = Vec::new();
             let mut stable: Vec<StableBlock> = Vec::new();
+            // Çevirisi yazının altına konacak blokların (altyazıların) kimlikleri.
+            let mut below: HashSet<String> = HashSet::new();
             let mut screen = None;
             match self.reader.read() {
                 Ok(reading) => {
@@ -134,7 +141,17 @@ impl Pipeline {
                     let options = block_merger::Options { aspect, ..Default::default() };
                     let merged = block_merger::merge_with(&reading.lines, &options);
                     stable = stabilizer.update(&merged, elapsed());
-                    blocks = compose(&self.config, &fetcher, &stable, elapsed());
+                    // Odak modunda tür dışı yazılar hiç ele alınmaz (çevrilmez, üstüne çizilmez).
+                    let kinds = focus::classify(&stable, &focus::Options { aspect, ..Default::default() });
+                    let mut kinds = kinds.into_iter();
+                    stable.retain(|block| {
+                        let kind = kinds.next().unwrap_or(focus::Kind::Other);
+                        if kind == focus::Kind::Dialogue {
+                            below.insert(block.id.clone());
+                        }
+                        !self.config.focus || kind != focus::Kind::Other
+                    });
+                    blocks = compose(&self.config, &fetcher, &stable, &below, elapsed());
 
                     on_event(Event::Round(RoundStats {
                         round,
@@ -181,7 +198,7 @@ impl Pipeline {
                 // Durdurma isteğine hızlı cevap verebilmek için kısa parçalar halinde beklenir.
                 if ready.recv_timeout(remaining.min(Duration::from_millis(50))).is_ok() && sent && !stable.is_empty() {
                     // Çeviri geldi: ekranı yeniden okumadan, son sabit bloklarla hemen gönder.
-                    let blocks = compose(&self.config, &fetcher, &stable, elapsed());
+                    let blocks = compose(&self.config, &fetcher, &stable, &below, elapsed());
                     delivery.send(&mut self.tv, blocks, screen, &mut on_event);
                 }
             }
@@ -234,9 +251,10 @@ struct Fetcher {
 
 /// Sabit bloklardan gösterilecek listeyi kurar: çevirisi hazır olanlar gider, eksikler arka
 /// planda istenir.
-fn compose(config: &Config, fetcher: &Fetcher, stable: &[StableBlock], now: f64) -> Vec<OverlayBlock> {
+fn compose(config: &Config, fetcher: &Fetcher, stable: &[StableBlock], below: &HashSet<String>, now: f64) -> Vec<OverlayBlock> {
     let Some(backend) = &config.backend else {
-        return stable.iter().map(|b| overlay_block(b, &b.text)).collect();
+        // Çevirisiz test: kutuların yazıya oturduğu görülsün diye hep yazının üstüne çizilir.
+        return stable.iter().map(|b| overlay_block(b, &b.text, false)).collect();
     };
     // Türkçe (PS5 arayüzü) ve yalnızca addan oluşan metin çevrilmez, üstüne de çizilmez:
     // orijinali görünür kalır.
@@ -248,11 +266,11 @@ fn compose(config: &Config, fetcher: &Fetcher, stable: &[StableBlock], now: f64)
     if !lookup.to_fetch.is_empty() {
         spawn_fetch(fetcher, lookup.to_fetch, now, backend.clone());
     }
-    english.iter().zip(&keys).filter_map(|(b, key)| lookup.found.get(key).map(|t| overlay_block(b, &terms::unprotect(t)))).collect()
+    english.iter().zip(&keys).filter_map(|(b, key)| lookup.found.get(key).map(|t| overlay_block(b, &terms::unprotect(t), config.below && below.contains(&b.id)))).collect()
 }
 
-fn overlay_block(block: &StableBlock, text: &str) -> OverlayBlock {
-    let b = block.bbox;
+fn overlay_block(block: &StableBlock, text: &str, below: bool) -> OverlayBlock {
+    let b = if below { focus::beside(block.bbox, block.line_height) } else { block.bbox };
     OverlayBlock { id: block.id.clone(), x: b.x, y: b.y, w: b.width, h: b.height, line_h: block.line_height, text: text.to_string() }
 }
 
@@ -488,5 +506,41 @@ mod tests {
 
         assert!(received.iter().any(|m| texts(m) == ["TR(Play Local)"]));
         assert!(started.elapsed() < Duration::from_millis(1700), "çeviri {:?} sonra geldi", started.elapsed());
+    }
+
+    fn sentence(text: &str, y: f64) -> TextLine {
+        TextLine { text: text.into(), bbox: Rect::new(0.3, y, 0.4, 0.04), confidence: 0.9 }
+    }
+
+    fn echo() -> Backend {
+        Arc::new(|texts: &[String]| Ok(texts.iter().map(|t| format!("TR({t})")).collect()))
+    }
+
+    #[test]
+    fn odak_modunda_tabela_cevrilmez_altyazi_cevrilir() {
+        let (address, messages) = fake_tv(usize::MAX);
+        let config = Config { backend: Some(echo()), focus: true, ..fast() };
+        let reader = FakeReader { lines: vec![line("Ocean View Hotel", 0.3), sentence("You shouldn't be here.", 0.8)], missing: 0, calls: 0 };
+
+        let (received, _) = run_until(reader, config, &messages, address, |m| !m.blocks.is_empty());
+
+        let shown = received.iter().find(|m| !m.blocks.is_empty()).unwrap();
+        assert_eq!(texts(shown), ["TR(You shouldn't be here.)"]);
+        // Odak tek başına yeri değiştirmez: çeviri yazının üstünde.
+        assert_eq!(shown.blocks[0].y, 0.8);
+    }
+
+    #[test]
+    fn altyazi_cevirisi_yazinin_altina_konur() {
+        let (address, messages) = fake_tv(usize::MAX);
+        let config = Config { backend: Some(echo()), below: true, ..fast() };
+        let reader = FakeReader { lines: vec![sentence("You shouldn't be here.", 0.7)], missing: 0, calls: 0 };
+
+        let (received, _) = run_until(reader, config, &messages, address, |m| !m.blocks.is_empty());
+
+        let block = &received.iter().find(|m| !m.blocks.is_empty()).unwrap().blocks[0];
+        // 0.7 + 0.04 yükseklik + 0.35 satırlık boşluk; boyut aynı.
+        assert!((block.y - 0.754).abs() < 1e-9, "{}", block.y);
+        assert!((block.x - 0.3).abs() < 1e-9 && (block.w - 0.4).abs() < 1e-9 && (block.h - 0.04).abs() < 1e-9);
     }
 }

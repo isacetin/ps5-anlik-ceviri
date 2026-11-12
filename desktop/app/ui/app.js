@@ -140,6 +140,8 @@ function renderSettings(settings) {
     radio.checked = radio.value === modeOf(settings);
   }
   $("fps").value = String(Math.round(settings.fps));
+  $("focus").checked = settings.focus !== false;
+  $("subtitle-below").checked = settings.subtitleBelow !== false;
   $("window").value = settings.window;
   $("protected-terms").value = settings.protectedTerms.join("\n");
   $("mode-value").textContent = { local: "Türkçe (yerel model)", deepl: "Türkçe (DeepL)", test: "Çevirisiz test" }[modeOf(settings)];
@@ -158,6 +160,8 @@ function readSettings() {
     tvAddress: $("tv-address").value.trim(),
     ...modeSettings(document.querySelector('input[name="mode"]:checked')?.value ?? "local"),
     fps: Number($("fps").value),
+    focus: $("focus").checked,
+    subtitleBelow: $("subtitle-below").checked,
     window: source === "pcGame" ? $("game-window").value : $("window").value.trim(),
     protectedTerms: $("protected-terms").value.split("\n").map((t) => t.trim()).filter(Boolean),
   };

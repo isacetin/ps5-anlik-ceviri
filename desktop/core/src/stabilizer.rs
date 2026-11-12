@@ -12,6 +12,8 @@ pub struct StableBlock {
     pub line_height: f64,
     /// Kabul edilmiş (çeviriye gidecek) kaynak metin.
     pub text: String,
+    /// Kutunun kaç saniyedir yerinden oynamadığı (menü yazısı durur, tabela kamerayla kayar).
+    pub still_seconds: f64,
 }
 
 /// Karelerden gelen blokları zaman içinde takip eder:
@@ -44,6 +46,8 @@ struct Tracked {
     /// Gösterilen kutu ve satır yüksekliği: OCR oynamalarından arındırılmış.
     shown_bbox: Rect,
     shown_line_height: f64,
+    /// Kutunun en son yer değiştirdiği (ya da ilk görüldüğü) an.
+    still_since: f64,
     /// Gösterilen metin; henüz hiçbir metin oturmadıysa `None`.
     accepted_text: Option<String>,
     /// Oturması beklenen metin ve kaç karedir aynı kaldığı.
@@ -76,7 +80,7 @@ impl Tracked {
     }
 
     /// Yeni OCR kutusunu alır; gösterilen kutu yalnızca belirgin bir kayma varsa güncellenir.
-    fn place(&mut self, block: &MergedBlock, tolerance: f64) {
+    fn place(&mut self, block: &MergedBlock, tolerance: f64, now: f64) {
         let (old, new) = (self.shown_bbox, block.bbox);
         let limit = block.line_height.max(self.shown_line_height) * tolerance;
         // x ekseni normalize birimde y'den ~16/9 kat "kısa"; aynı piksel toleransı için daraltılır.
@@ -88,6 +92,7 @@ impl Tracked {
         if moved {
             self.shown_bbox = new;
             self.shown_line_height = block.line_height;
+            self.still_since = now;
         }
         self.block = block.clone();
     }
@@ -122,7 +127,7 @@ impl Stabilizer {
             if let Some((index, _)) = best {
                 matched[index] = true;
                 let item = &mut self.tracked[index];
-                item.place(block, self.box_tolerance);
+                item.place(block, self.box_tolerance, now);
                 item.last_seen = now;
                 item.observe(&block.text, now, self.min_stable_frames, self.min_stable_seconds);
             } else {
@@ -131,6 +136,7 @@ impl Stabilizer {
                     block: block.clone(),
                     shown_bbox: block.bbox,
                     shown_line_height: block.line_height,
+                    still_since: now,
                     accepted_text: None,
                     candidate_text: block.text.clone(),
                     candidate_frames: 0,
@@ -154,6 +160,7 @@ impl Stabilizer {
                     bbox: item.shown_bbox,
                     line_height: item.shown_line_height,
                     text: text.clone(),
+                    still_seconds: now - item.still_since,
                 })
             })
             .collect()
@@ -325,8 +332,10 @@ mod tests {
         assert_eq!(shown[0].bbox.y, 0.800);
 
         // Gerçek kayma (altyazı bir satır yukarı çıktı) hemen izlenir.
+        assert_eq!(shown[0].still_seconds, 1.0);
         let moved = stabilizer.update(&[block_at("Hello", 0.770)], 1.5);
         assert_eq!(moved[0].bbox.y, 0.770);
+        assert_eq!(moved[0].still_seconds, 0.0);
     }
 
     #[test]

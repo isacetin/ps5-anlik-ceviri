@@ -88,6 +88,10 @@ pub struct Settings {
     pub protected_terms: Vec<String>,
     /// İlk kurulum sihirbazı tamamlandı mı (değilse uygulama açılınca sihirbaz gösterilir).
     pub setup_done: bool,
+    /// Yalnızca altyazı ve menü çevrilir; logo, tabela gibi oyun dünyası yazıları atlanır.
+    pub focus: bool,
+    /// Altyazı çevirisi orijinal yazının üstüne değil altına konur.
+    pub subtitle_below: bool,
     /// Ayar dosyasının biçim sürümü; eski dosyaları yeni varsayılanlara taşımak için.
     pub settings_version: u32,
 }
@@ -105,6 +109,8 @@ impl Default for Settings {
             regions: BTreeMap::new(),
             protected_terms: Vec::new(),
             setup_done: false,
+            focus: true,
+            subtitle_below: true,
             settings_version: Settings::VERSION,
         }
     }
@@ -340,7 +346,7 @@ impl Inner {
             return Ok(());
         }
 
-        let mut config = Config { fps: settings.fps, terms: Terms::new(&settings.protected_terms), ..Config::default() };
+        let mut config = Config { fps: settings.fps, terms: Terms::new(&settings.protected_terms), focus: settings.focus, below: settings.subtitle_below, ..Config::default() };
         if settings.translate {
             if settings.engine == Engine::Local {
                 state("starting", "Çeviri modeli yükleniyor…");
@@ -409,7 +415,7 @@ mod tests {
 
     impl ScreenReader for FakeReader {
         fn read(&mut self) -> Result<Reading, ReadError> {
-            let line = TextLine { text: "Play Local".into(), bbox: Rect::new(0.1, 0.5, 0.1, 0.03), confidence: 0.9 };
+            let line = TextLine { text: "The door is locked.".into(), bbox: Rect::new(0.1, 0.5, 0.1, 0.03), confidence: 0.9 };
             Ok(Reading { lines: vec![line], video_width: 1920, video_height: 1080, fullscreen: true, capture_ms: 1, ocr_ms: 1, screen: None })
         }
     }
@@ -508,10 +514,10 @@ mod tests {
         let (controller, events) = controller(settings, backend);
 
         controller.start().unwrap();
-        let seen = wait_for(&events, |e| matches!(e, UiEvent::Shown { texts } if texts == &["TR(Play Local)"]));
+        let seen = wait_for(&events, |e| matches!(e, UiEvent::Shown { texts } if texts == &["TR(The door is locked.)"]));
         controller.stop();
 
-        assert!(messages.try_iter().any(|m| m.blocks.iter().any(|b| b.text == "TR(Play Local)")));
+        assert!(messages.try_iter().any(|m| m.blocks.iter().any(|b| b.text == "TR(The door is locked.)")));
         assert_eq!(*asked.lock().unwrap(), [Engine::Deepl]);
         assert!(seen.contains(&UiEvent::State { state: "running".into(), detail: "Türkçe çeviri (DeepL)".into() }));
     }
@@ -526,7 +532,7 @@ mod tests {
         controller.stop();
 
         assert!(!seen.iter().any(|e| matches!(e, UiEvent::Tv { .. })), "TV olayı gelmemeli");
-        assert!(seen.iter().any(|e| matches!(e, UiEvent::Shown { texts } if texts == &["Play Local"])));
+        assert!(seen.iter().any(|e| matches!(e, UiEvent::Shown { texts } if texts == &["The door is locked."])));
         let last = wait_for(&events, |e| matches!(e, UiEvent::State { state, .. } if state == "stopped"));
         // Durunca overlay'e "gizle" (boş liste, konum yok) gider.
         assert!(last.contains(&UiEvent::Frame { blocks: vec![], screen: None }));

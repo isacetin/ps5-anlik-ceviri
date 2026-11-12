@@ -6,6 +6,7 @@
 
 pub mod block_merger;
 pub mod deepl;
+pub mod focus;
 pub mod frame_stats;
 pub mod geometry;
 pub mod language;
