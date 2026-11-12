@@ -15,16 +15,22 @@ pub struct StableBlock {
 }
 
 /// Karelerden gelen blokları zaman içinde takip eder:
-/// - Metin `min_stable_frames` kare boyunca değişmeden kalınca "hazır" olur (daktilo efektiyle
-///   harf harf beliren metin, yazımı bitmeden çevrilmez).
+/// - Metin en az `min_stable_frames` kare ve `min_stable_seconds` saniye değişmeden kalınca
+///   "hazır" olur (daktilo efektiyle harf harf beliren metin, yazımı bitmeden çevrilmez). Süre
+///   şartı sayesinde tur sıklığı artınca bekleme kısalır ama yarım metin kabul edilmez.
 /// - OCR'ın tek karelik harf oynamaları ("Kupalar" / "Kupalar.") metni değiştirmiş sayılmaz.
 /// - Ekrandaki bir bloğun metni değişirse, yeni metin oturana kadar eski metin gösterilmeye
 ///   devam eder (diyalog geçişlerinde ve OCR oynamalarında boşluk/titreme olmaz).
 /// - Bir kare görünmeyen blok `hold_seconds` boyunca tutulur; titreme olmaz.
+/// - OCR kutusunun kareden kareye birkaç piksellik oynaması gösterilen kutuyu kıpırdatmaz;
+///   kutu ancak gerçekten yer değiştirince güncellenir.
 #[derive(Clone, Debug)]
 pub struct Stabilizer {
     pub min_stable_frames: u32,
+    pub min_stable_seconds: f64,
     pub hold_seconds: f64,
+    /// Kutunun bir kenarı satır yüksekliğinin bu katından az oynarsa gösterilen kutu değişmez.
+    pub box_tolerance: f64,
     /// Yeni blok, takip edilen blokla en az bu kadar örtüşürse (IoU) aynı blok sayılır.
     pub min_overlap: f64,
     tracked: Vec<Tracked>,
@@ -35,16 +41,20 @@ pub struct Stabilizer {
 struct Tracked {
     id: String,
     block: MergedBlock,
+    /// Gösterilen kutu ve satır yüksekliği: OCR oynamalarından arındırılmış.
+    shown_bbox: Rect,
+    shown_line_height: f64,
     /// Gösterilen metin; henüz hiçbir metin oturmadıysa `None`.
     accepted_text: Option<String>,
     /// Oturması beklenen metin ve kaç karedir aynı kaldığı.
     candidate_text: String,
     candidate_frames: u32,
+    candidate_since: f64,
     last_seen: f64,
 }
 
 impl Tracked {
-    fn observe(&mut self, text: &str, min_stable_frames: u32) {
+    fn observe(&mut self, text: &str, now: f64, min_stable_frames: u32, min_stable_seconds: f64) {
         if let Some(accepted) = &self.accepted_text {
             if same_text(accepted, text) {
                 self.candidate_text = accepted.clone();
@@ -52,21 +62,40 @@ impl Tracked {
                 return;
             }
         }
-        if same_text(&self.candidate_text, text) {
+        if self.candidate_frames > 0 && same_text(&self.candidate_text, text) {
             self.candidate_frames += 1;
         } else {
             self.candidate_text = text.to_string();
             self.candidate_frames = 1;
+            self.candidate_since = now;
         }
-        if self.candidate_frames >= min_stable_frames {
+        // Küçük pay: tur aralığı tam süreye denk geldiğinde kayan nokta hatası bir tur kaybettirmesin.
+        if self.candidate_frames >= min_stable_frames && now - self.candidate_since >= min_stable_seconds - 1e-6 {
             self.accepted_text = Some(self.candidate_text.clone());
         }
+    }
+
+    /// Yeni OCR kutusunu alır; gösterilen kutu yalnızca belirgin bir kayma varsa güncellenir.
+    fn place(&mut self, block: &MergedBlock, tolerance: f64) {
+        let (old, new) = (self.shown_bbox, block.bbox);
+        let limit = block.line_height.max(self.shown_line_height) * tolerance;
+        // x ekseni normalize birimde y'den ~16/9 kat "kısa"; aynı piksel toleransı için daraltılır.
+        let limit_x = limit / crate::geometry::VIDEO_ASPECT;
+        let moved = (old.x - new.x).abs() > limit_x
+            || (old.right() - new.right()).abs() > limit_x
+            || (old.y - new.y).abs() > limit
+            || (old.bottom() - new.bottom()).abs() > limit;
+        if moved {
+            self.shown_bbox = new;
+            self.shown_line_height = block.line_height;
+        }
+        self.block = block.clone();
     }
 }
 
 impl Default for Stabilizer {
     fn default() -> Stabilizer {
-        Stabilizer { min_stable_frames: 2, hold_seconds: 0.8, min_overlap: 0.3, tracked: Vec::new(), next_id: 1 }
+        Stabilizer { min_stable_frames: 2, min_stable_seconds: 0.3, hold_seconds: 0.5, box_tolerance: 0.25, min_overlap: 0.3, tracked: Vec::new(), next_id: 1 }
     }
 }
 
@@ -93,19 +122,22 @@ impl Stabilizer {
             if let Some((index, _)) = best {
                 matched[index] = true;
                 let item = &mut self.tracked[index];
-                item.block = block.clone();
+                item.place(block, self.box_tolerance);
                 item.last_seen = now;
-                item.observe(&block.text, self.min_stable_frames);
+                item.observe(&block.text, now, self.min_stable_frames, self.min_stable_seconds);
             } else {
                 let mut item = Tracked {
                     id: format!("b{}", self.next_id),
                     block: block.clone(),
+                    shown_bbox: block.bbox,
+                    shown_line_height: block.line_height,
                     accepted_text: None,
                     candidate_text: block.text.clone(),
                     candidate_frames: 0,
+                    candidate_since: now,
                     last_seen: now,
                 };
-                item.observe(&block.text, self.min_stable_frames);
+                item.observe(&block.text, now, self.min_stable_frames, self.min_stable_seconds);
                 self.tracked.push(item);
                 matched.push(true);
                 self.next_id += 1;
@@ -119,8 +151,8 @@ impl Stabilizer {
             .filter_map(|item| {
                 item.accepted_text.as_ref().map(|text| StableBlock {
                     id: item.id.clone(),
-                    bbox: item.block.bbox,
-                    line_height: item.block.line_height,
+                    bbox: item.shown_bbox,
+                    line_height: item.shown_line_height,
                     text: text.clone(),
                 })
             })
@@ -257,8 +289,44 @@ mod tests {
         stabilizer.update(&[block("Hello")], 0.0);
         stabilizer.update(&[block("Hello")], 0.5);
 
-        assert_eq!(texts(&stabilizer.update(&[], 1.0)), ["Hello"]);
-        assert!(stabilizer.update(&[], 1.4).is_empty());
+        assert_eq!(texts(&stabilizer.update(&[], 0.9)), ["Hello"]);
+        assert!(stabilizer.update(&[], 1.1).is_empty());
+    }
+
+    #[test]
+    fn hizli_turlarda_sure_dolmadan_metin_kabul_edilmez() {
+        let mut stabilizer = Stabilizer::new();
+        // Saniyede 5 tur: iki kare yetmez, metin 0.3 sn aynı kalmalı.
+        assert!(stabilizer.update(&[block("Door is locked")], 0.0).is_empty());
+        assert!(stabilizer.update(&[block("Door is locked")], 0.2).is_empty());
+
+        assert_eq!(texts(&stabilizer.update(&[block("Door is locked")], 0.4)), ["Door is locked"]);
+    }
+
+    #[test]
+    fn hizli_turlarda_daktilo_metni_bitince_kabul_edilir() {
+        let mut stabilizer = Stabilizer::new();
+        assert!(stabilizer.update(&[block("You sho")], 0.0).is_empty());
+        assert!(stabilizer.update(&[block("You shouldn't")], 0.2).is_empty());
+        assert!(stabilizer.update(&[block("You shouldn't be here.")], 0.4).is_empty());
+        assert!(stabilizer.update(&[block("You shouldn't be here.")], 0.6).is_empty());
+
+        assert_eq!(texts(&stabilizer.update(&[block("You shouldn't be here.")], 0.8)), ["You shouldn't be here."]);
+    }
+
+    #[test]
+    fn kutunun_kucuk_oynamasi_gosterilen_kutuyu_degistirmez() {
+        let mut stabilizer = Stabilizer::new();
+        stabilizer.update(&[block_at("Hello", 0.800)], 0.0);
+        stabilizer.update(&[block_at("Hello", 0.802)], 0.5);
+
+        // Satır yüksekliği 0.03: 0.002'lik oynama toleransın (0.0075) altında.
+        let shown = stabilizer.update(&[block_at("Hello", 0.798)], 1.0);
+        assert_eq!(shown[0].bbox.y, 0.800);
+
+        // Gerçek kayma (altyazı bir satır yukarı çıktı) hemen izlenir.
+        let moved = stabilizer.update(&[block_at("Hello", 0.770)], 1.5);
+        assert_eq!(moved[0].bbox.y, 0.770);
     }
 
     #[test]

@@ -21,11 +21,11 @@ use crate::capture::WindowCapture;
 use crate::imaging::{crop, draw_boxes, is_mostly_black, prepare_for_ocr};
 use crate::{ensure_mta, ocr, win};
 
-/// Bu kadar tur üst üste siyah kare gelirse (2 fps'te ~10 sn) kullanıcı uyarılır; daha kısası
-/// yükleme ekranıdır.
-const BLACK_ROUNDS: u32 = 20;
+/// Bu kadar tur üst üste siyah kare gelirse (varsayılan 5 fps'te ~10 sn) kullanıcı uyarılır;
+/// daha kısası yükleme ekranıdır.
+const BLACK_ROUNDS: u32 = 50;
 /// Pencere yakalaması bu kadar tur (~2 sn) siyah gelirse monitör yakalamaya geçilir.
-const WINDOW_BLACK_ROUNDS: u32 = 4;
+const WINDOW_BLACK_ROUNDS: u32 = 10;
 /// `CEVIRI_YAKALAMA=ekran`: oyun modunda baştan monitör yakalanır (test ve sorun giderme için).
 const CAPTURE_ENV: &str = "CEVIRI_YAKALAMA";
 

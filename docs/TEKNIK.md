@@ -25,7 +25,7 @@ Rust karşılıkları (`desktop/core`) aynı kuralları ve aynı testleri taşı
 
 ## Nasıl çalışıyor? (basit anlatım)
 
-Saniyede 2 kez şu döngü döner:
+Saniyede 5 kez (ayarlanabilir) şu döngü döner:
 
 1. **Bak:** Mac, Remote Play penceresinin anlık görüntüsünü alır ve içinden sadece oyun görüntüsünü
    (16:9 alan) keser; başlık çubuğu ve kenardaki siyah bantlar atılır.
@@ -146,7 +146,7 @@ SCStream (pencere akışı) ─▶ 16:9 video alanı ─▶ Vision OCR ─▶ Bl
 - **Neden normalize koordinat?** Remote Play penceresi 960×540 de olabilir, TV 4K da; oranlar
   her çözünürlükte aynıdır.
 - **Neden 3 sn fail-safe?** Mac çökerse, ağ koparsa ya da Remote Play kapanırsa TV'de eski bir çeviri
-  asılı kalmaz. Mac bu yüzden liste değişmese de saniyede 2 kez gönderir.
+  asılı kalmaz. Mac bu yüzden liste değişmese de her turda gönderir.
 - **Neden önbellek + stabilizasyon?** DeepL kotası karakter başına sayılır; aynı yazının her karede
   yeniden çevrilmesi kotayı dakikalar içinde bitirirdi.
 - **Neden yerel model olarak Opus-MT?** Altyazıda hız her şeyden önemli. Opus-MT (Helsinki-NLP

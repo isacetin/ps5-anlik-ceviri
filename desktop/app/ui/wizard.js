@@ -453,7 +453,7 @@
       el("p", {}, "Çeviriyi kim yapsın?"),
       choice("local", "Yerel model (önerilen)", "Bu bilgisayarda çalışır: altyazı başına ~0,1 sn, ücretsiz, internetsiz. Konuşmalarda DeepL'e yakın, deyimlerde daha zayıf."),
       mode === "local" ? local : null,
-      choice("deepl", "DeepL", "En iyi çeviri kalitesi. Ücretsiz hesap ve API anahtarı gerekir, internet ister."),
+      choice("deepl", "DeepL", "En iyi çeviri kalitesi, ama daha yavaş: altyazı başına ~0,2–0,5 sn. Ücretsiz hesap ve API anahtarı gerekir, internet ister."),
       mode === "deepl" ? deepl : null,
       choice("test", "Şimdilik çevirisiz dene", "İngilizce yazıları olduğu yerde gösterir; kutuların doğru yere oturduğunu görürsünüz."),
       nav({ next: ready || model.busy ? "Devam" : "Sonra yaparım", canNext: !model.busy }),

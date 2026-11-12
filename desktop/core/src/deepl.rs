@@ -27,6 +27,9 @@ struct Request<'a> {
     target_lang: &'static str,
     tag_handling: &'static str,
     ignore_tags: [&'static str; 1],
+    /// Çevrilmez ve kotadan düşmez; yalnızca kısa cümlelerin doğru anlaşılmasına yardım eder.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    context: Option<&'a str>,
 }
 
 #[derive(Deserialize)]
@@ -40,8 +43,24 @@ struct Translation {
 }
 
 pub fn request_body(texts: &[String]) -> String {
-    serde_json::to_string(&Request { text: texts, source_lang: "EN", target_lang: "TR", tag_handling: "xml", ignore_tags: ["x"] })
+    request_body_with_context(texts, "")
+}
+
+/// `context`: az önce ekranda geçen replikler (düz metin). Boşsa gönderilmez.
+pub fn request_body_with_context(texts: &[String], context: &str) -> String {
+    let context = (!context.trim().is_empty()).then_some(context);
+    serde_json::to_string(&Request { text: texts, source_lang: "EN", target_lang: "TR", tag_handling: "xml", ignore_tags: ["x"], context })
         .expect("istek serileştirilebilir")
+}
+
+/// Bağlam olarak tutulan son replik sayısı ve toplam uzunluk sınırı (karakter).
+pub const CONTEXT_LINES: usize = 4;
+pub const CONTEXT_CHARS: usize = 600;
+
+/// Yalnızca cümle gibi duran metin bağlama girer; "Options", "Continue" gibi menü öğeleri
+/// sonraki repliğin çevirisini yanlış yöne çekebilir.
+pub fn is_context_worthy(text: &str) -> bool {
+    text.split_whitespace().count() >= 3
 }
 
 pub fn parse_response(body: &str) -> Result<Vec<String>, TranslationError> {
@@ -73,6 +92,11 @@ mod tests {
         assert_eq!(body["target_lang"], "TR");
         assert_eq!(body["tag_handling"], "xml");
         assert_eq!(body["ignore_tags"], serde_json::json!(["x"]));
+
+        assert!(body.get("context").is_none());
+        let with_context: serde_json::Value = serde_json::from_str(&request_body_with_context(&["Not yet.".into()], "Are you ready to leave?")).unwrap();
+        assert_eq!(with_context["context"], "Are you ready to leave?");
+        assert!(is_context_worthy("Are you ready?") && !is_context_worthy("New Game"));
 
         let response = r#"{"translations":[{"detected_source_language":"EN","text":"Kapı kilitli."}]}"#;
         assert_eq!(parse_response(response), Ok(vec!["Kapı kilitli.".to_string()]));

@@ -33,7 +33,7 @@ pub struct Config {
 
 impl Default for Config {
     fn default() -> Config {
-        Config { fps: 2.0, backend: None, cache: Default::default(), cache_path: None, dump_dir: None, once: false, terms: Terms::new(&[]) }
+        Config { fps: 5.0, backend: None, cache: Default::default(), cache_path: None, dump_dir: None, once: false, terms: Terms::new(&[]) }
     }
 }
 
@@ -95,12 +95,18 @@ impl Pipeline {
         let fps = self.config.fps.max(1.0);
         let started = Instant::now();
         let elapsed = move || started.elapsed().as_secs_f64();
-        let translator = Arc::new(Mutex::new(Translator::new(std::mem::take(&mut self.config.cache))));
         let (failures_tx, failures): (Sender<TranslationError>, Receiver<TranslationError>) = mpsc::channel();
+        // Arka plandaki çeviri bitince haber verir: sonuç bir sonraki turu beklemeden gösterilir.
+        let (ready_tx, ready): (Sender<()>, Receiver<()>) = mpsc::channel();
+        let fetcher = Fetcher {
+            translator: Arc::new(Mutex::new(Translator::new(std::mem::take(&mut self.config.cache)))),
+            cache_path: self.config.cache_path.clone(),
+            failures: failures_tx,
+            ready: ready_tx,
+        };
         let mut stabilizer = Stabilizer::new();
-        let mut last_shown: Vec<String> = Vec::new();
+        let mut delivery = Delivery { tv_ok: None, last_shown: Vec::new() };
         let mut waiting_for_window = false;
-        let mut tv_ok: Option<bool> = None;
         let mut round = 0u64;
 
         while !self.stop.load(Ordering::Relaxed) {
@@ -109,8 +115,11 @@ impl Pipeline {
             for error in failures.try_iter() {
                 on_event(Event::TranslationFailed(error));
             }
+            // Bu turdan önce biten çeviriler zaten bu turda görülecek.
+            ready.try_iter().for_each(drop);
 
             let mut blocks: Vec<OverlayBlock> = Vec::new();
+            let mut stable: Vec<StableBlock> = Vec::new();
             let mut screen = None;
             match self.reader.read() {
                 Ok(reading) => {
@@ -124,28 +133,8 @@ impl Pipeline {
                     let aspect = reading.video_width as f64 / reading.video_height.max(1) as f64;
                     let options = block_merger::Options { aspect, ..Default::default() };
                     let merged = block_merger::merge_with(&reading.lines, &options);
-                    let stable = stabilizer.update(&merged, elapsed());
-                    blocks = match &self.config.backend {
-                        Some(backend) => {
-                            // Türkçe (PS5 arayüzü) ve yalnızca addan oluşan metin çevrilmez, üstüne de
-                            // çizilmez: orijinali görünür kalır.
-                            let terms = &self.config.terms;
-                            let english: Vec<&StableBlock> =
-                                stable.iter().filter(|b| !language::looks_turkish(&b.text) && !terms.is_only_terms(&b.text)).collect();
-                            // Önbellek ve DeepL işaretli hali görür; ad listesi değişince eski çeviri kullanılmaz.
-                            let keys: Vec<String> = english.iter().map(|b| terms.protect(&b.text)).collect();
-                            let lookup = translator.lock().unwrap().lookup(&keys, elapsed());
-                            if !lookup.to_fetch.is_empty() {
-                                spawn_fetch(&translator, lookup.to_fetch, elapsed(), backend.clone(), self.config.cache_path.clone(), failures_tx.clone());
-                            }
-                            english
-                                .iter()
-                                .zip(&keys)
-                                .filter_map(|(b, key)| lookup.found.get(key).map(|t| overlay_block(b, &terms::unprotect(t))))
-                                .collect()
-                        }
-                        None => stable.iter().map(|b| overlay_block(b, &b.text)).collect(),
-                    };
+                    stable = stabilizer.update(&merged, elapsed());
+                    blocks = compose(&self.config, &fetcher, &stable, elapsed());
 
                     on_event(Event::Round(RoundStats {
                         round,
@@ -176,31 +165,26 @@ impl Pipeline {
             }
 
             // Liste değişmese de her tur gönderilir: TV 3 sn mesaj almazsa yazıları kaldırır.
-            let sent = match self.tv.as_mut() {
-                Some(tv) => tv.send(&blocks),
-                None => Ok(()),
-            };
-            if self.tv.is_some() {
-                match &sent {
-                    Ok(()) if tv_ok != Some(true) => on_event(Event::TvConnected),
-                    Err(error) if tv_ok != Some(false) => on_event(Event::TvUnreachable(error.clone())),
-                    _ => {}
-                }
-                tv_ok = Some(sent.is_ok());
-            }
-            let shown: Vec<String> = blocks.iter().map(|b| b.text.clone()).collect();
-            if sent.is_ok() && shown != last_shown {
-                on_event(Event::Shown(shown.clone()));
-                last_shown = shown;
-            }
-            on_event(Event::Frame { blocks, screen });
+            let sent = delivery.send(&mut self.tv, blocks, screen, &mut on_event);
 
             if self.config.once {
                 std::thread::sleep(Duration::from_secs(2));
                 break;
             }
-            let pause = if sent.is_err() { Duration::from_secs(2) } else { Duration::from_secs_f64(1.0 / fps).saturating_sub(round_start.elapsed()) };
-            sleep_unless_stopped(pause, &self.stop);
+            let pause = if sent { Duration::from_secs_f64(1.0 / fps).saturating_sub(round_start.elapsed()) } else { Duration::from_secs(2) };
+            let deadline = Instant::now() + pause;
+            while !self.stop.load(Ordering::Relaxed) {
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                if remaining.is_zero() {
+                    break;
+                }
+                // Durdurma isteğine hızlı cevap verebilmek için kısa parçalar halinde beklenir.
+                if ready.recv_timeout(remaining.min(Duration::from_millis(50))).is_ok() && sent && !stable.is_empty() {
+                    // Çeviri geldi: ekranı yeniden okumadan, son sabit bloklarla hemen gönder.
+                    let blocks = compose(&self.config, &fetcher, &stable, elapsed());
+                    delivery.send(&mut self.tv, blocks, screen, &mut on_event);
+                }
+            }
         }
         if let Some(tv) = self.tv.as_mut() {
             tv.close();
@@ -209,16 +193,77 @@ impl Pipeline {
     }
 }
 
+/// TV'ye gönderim ve "ne gösteriliyor" olayları; tur içinde birden çok kez çağrılabilir.
+struct Delivery {
+    tv_ok: Option<bool>,
+    last_shown: Vec<String>,
+}
+
+impl Delivery {
+    /// Gönderim başarılıysa (ya da TV yoksa) `true`.
+    fn send(&mut self, tv: &mut Option<TvClient>, blocks: Vec<OverlayBlock>, screen: Option<Rect>, on_event: &mut impl FnMut(Event)) -> bool {
+        let sent = match tv.as_mut() {
+            Some(tv) => tv.send(&blocks),
+            None => Ok(()),
+        };
+        if tv.is_some() {
+            match &sent {
+                Ok(()) if self.tv_ok != Some(true) => on_event(Event::TvConnected),
+                Err(error) if self.tv_ok != Some(false) => on_event(Event::TvUnreachable(error.clone())),
+                _ => {}
+            }
+            self.tv_ok = Some(sent.is_ok());
+        }
+        let shown: Vec<String> = blocks.iter().map(|b| b.text.clone()).collect();
+        if sent.is_ok() && shown != self.last_shown {
+            on_event(Event::Shown(shown.clone()));
+            self.last_shown = shown;
+        }
+        on_event(Event::Frame { blocks, screen });
+        sent.is_ok()
+    }
+}
+
+/// Çeviri önbelleği ve arka plan isteklerinin ana döngüye haber verdiği kanallar.
+struct Fetcher {
+    translator: Arc<Mutex<Translator>>,
+    cache_path: Option<PathBuf>,
+    failures: Sender<TranslationError>,
+    ready: Sender<()>,
+}
+
+/// Sabit bloklardan gösterilecek listeyi kurar: çevirisi hazır olanlar gider, eksikler arka
+/// planda istenir.
+fn compose(config: &Config, fetcher: &Fetcher, stable: &[StableBlock], now: f64) -> Vec<OverlayBlock> {
+    let Some(backend) = &config.backend else {
+        return stable.iter().map(|b| overlay_block(b, &b.text)).collect();
+    };
+    // Türkçe (PS5 arayüzü) ve yalnızca addan oluşan metin çevrilmez, üstüne de çizilmez:
+    // orijinali görünür kalır.
+    let terms = &config.terms;
+    let english: Vec<&StableBlock> = stable.iter().filter(|b| !language::looks_turkish(&b.text) && !terms.is_only_terms(&b.text)).collect();
+    // Önbellek ve DeepL işaretli hali görür; ad listesi değişince eski çeviri kullanılmaz.
+    let keys: Vec<String> = english.iter().map(|b| terms.protect(&b.text)).collect();
+    let lookup = fetcher.translator.lock().unwrap().lookup(&keys, now);
+    if !lookup.to_fetch.is_empty() {
+        spawn_fetch(fetcher, lookup.to_fetch, now, backend.clone());
+    }
+    english.iter().zip(&keys).filter_map(|(b, key)| lookup.found.get(key).map(|t| overlay_block(b, &terms::unprotect(t)))).collect()
+}
+
 fn overlay_block(block: &StableBlock, text: &str) -> OverlayBlock {
     let b = block.bbox;
     OverlayBlock { id: block.id.clone(), x: b.x, y: b.y, w: b.width, h: b.height, line_h: block.line_height, text: text.to_string() }
 }
 
 /// Eksik çevirileri arka planda ister; ana döngü bu sırada okumaya devam eder.
-fn spawn_fetch(translator: &Arc<Mutex<Translator>>, texts: Vec<String>, now: f64, backend: Backend, cache_path: Option<PathBuf>, failures: Sender<TranslationError>) {
-    let translator = translator.clone();
+fn spawn_fetch(fetcher: &Fetcher, texts: Vec<String>, now: f64, backend: Backend) {
+    let translator = fetcher.translator.clone();
+    let (cache_path, failures, ready) = (fetcher.cache_path.clone(), fetcher.failures.clone(), fetcher.ready.clone());
     std::thread::spawn(move || match translator::fetch(&translator, &texts, now, |batch| backend(batch)) {
         Ok(()) => {
+            // Önce haber ver: diske yazma gösterimi geciktirmesin.
+            let _ = ready.send(());
             if let Some(path) = cache_path {
                 let snapshot = translator.lock().unwrap().snapshot().clone();
                 let _ = storage::save_cache(&path, &snapshot);
@@ -228,18 +273,6 @@ fn spawn_fetch(translator: &Arc<Mutex<Translator>>, texts: Vec<String>, now: f64
             let _ = failures.send(error);
         }
     });
-}
-
-/// Durdurma isteğine hızlı cevap verebilmek için kısa parçalar halinde uyur.
-fn sleep_unless_stopped(duration: Duration, stop: &AtomicBool) {
-    let deadline = Instant::now() + duration;
-    while !stop.load(Ordering::Relaxed) {
-        let remaining = deadline.saturating_duration_since(Instant::now());
-        if remaining.is_zero() {
-            return;
-        }
-        std::thread::sleep(remaining.min(Duration::from_millis(50)));
-    }
 }
 
 #[cfg(test)]
@@ -436,5 +469,24 @@ mod tests {
         let limit = one_attempt + Duration::from_millis(700);
         assert!(stopped_at.elapsed() < limit, "durdurma {:?} sürdü, sınır {limit:?}", stopped_at.elapsed());
         assert_eq!(events.iter().filter(|e| matches!(e, Event::TvUnreachable(_))).count(), 1);
+    }
+
+    #[test]
+    fn ceviri_gelince_sonraki_tur_beklenmeden_gonderilir() {
+        let (address, messages) = fake_tv(usize::MAX);
+        let backend: Backend = Arc::new(|texts: &[String]| {
+            thread::sleep(Duration::from_millis(150));
+            Ok(texts.iter().map(|t| format!("TR({t})")).collect())
+        });
+        // Saniyede 1 tur: metin 2. turda (1. sn) oturur, çeviri ~1.15 sn'de hazır olur. Bir sonraki
+        // tur 2. sn'de; çeviri ondan çok önce TV'ye gitmiş olmalı.
+        let config = Config { backend: Some(backend), fps: 1.0, ..Config::default() };
+        let reader = FakeReader { lines: vec![line("Play Local", 0.5)], missing: 0, calls: 0 };
+        let started = Instant::now();
+
+        let (received, _) = run_until(reader, config, &messages, address, |m| !m.blocks.is_empty());
+
+        assert!(received.iter().any(|m| texts(m) == ["TR(Play Local)"]));
+        assert!(started.elapsed() < Duration::from_millis(1700), "çeviri {:?} sonra geldi", started.elapsed());
     }
 }

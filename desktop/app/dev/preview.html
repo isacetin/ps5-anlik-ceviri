@@ -94,15 +94,17 @@
           <fieldset class="field">
             <legend>Mod</legend>
             <label class="choice"><input type="radio" name="mode" value="local"> Türkçe çeviri, yerel model: bu bilgisayarda çalışır, hızlı, ücretsiz, internetsiz</label>
-            <label class="choice"><input type="radio" name="mode" value="deepl"> Türkçe çeviri, DeepL: en iyi kalite, API anahtarı ve internet gerekir</label>
+            <label class="choice"><input type="radio" name="mode" value="deepl"> Türkçe çeviri, DeepL: en iyi kalite, biraz daha yavaş, API anahtarı ve internet gerekir</label>
             <label class="choice"><input type="radio" name="mode" value="test"> Çevirisiz test: İngilizce metni yerinde gösterir</label>
           </fieldset>
           <label class="field">
             <span>Hız</span>
             <select id="fps">
               <option value="1">Saniyede 1 kez</option>
-              <option value="2">Saniyede 2 kez (önerilen)</option>
+              <option value="2">Saniyede 2 kez (işlemciyi az yorar)</option>
               <option value="3">Saniyede 3 kez</option>
+              <option value="5">Saniyede 5 kez (önerilen)</option>
+              <option value="8">Saniyede 8 kez (en hızlı)</option>
             </select>
           </label>
           <label class="field">

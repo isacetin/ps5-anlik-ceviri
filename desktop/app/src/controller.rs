@@ -88,6 +88,8 @@ pub struct Settings {
     pub protected_terms: Vec<String>,
     /// İlk kurulum sihirbazı tamamlandı mı (değilse uygulama açılınca sihirbaz gösterilir).
     pub setup_done: bool,
+    /// Ayar dosyasının biçim sürümü; eski dosyaları yeni varsayılanlara taşımak için.
+    pub settings_version: u32,
 }
 
 impl Default for Settings {
@@ -98,16 +100,19 @@ impl Default for Settings {
             tv_address: String::new(),
             translate: true,
             engine: Engine::Local,
-            fps: 2.0,
+            fps: 5.0,
             window: String::new(),
             regions: BTreeMap::new(),
             protected_terms: Vec::new(),
             setup_done: false,
+            settings_version: Settings::VERSION,
         }
     }
 }
 
 impl Settings {
+    pub const VERSION: u32 = 1;
+
     pub fn load() -> Settings {
         let json = storage::settings_path().and_then(|path| std::fs::read_to_string(path).ok());
         Settings::from_json(json.as_deref(), storage::deepl_key().is_some())
@@ -123,6 +128,11 @@ impl Settings {
         if value.get("engine").is_none() && has_deepl_key {
             settings.engine = Engine::Deepl;
         }
+        // Sürüm 1'den önce önerilen hız saniyede 2 turdu; o değerde kalanlar yeni önerilene geçer.
+        if value.get("settingsVersion").is_none() && settings.fps == 2.0 {
+            settings.fps = Settings::default().fps;
+        }
+        settings.settings_version = Settings::VERSION;
         settings
     }
 
@@ -629,6 +639,10 @@ mod tests {
         assert_eq!(Settings::from_json(Some(old), false).engine, Engine::Local);
         assert_eq!(Settings::from_json(Some(r#"{"engine":"local"}"#), true).engine, Engine::Local);
         assert_eq!(Settings::from_json(None, true), Settings::default());
+        // Eski önerilen hız (2) yeni önerilene taşınır; bilerek seçilmiş başka değerlere dokunulmaz.
+        assert_eq!(Settings::from_json(Some(r#"{"fps":2.0}"#), false).fps, 5.0);
+        assert_eq!(Settings::from_json(Some(r#"{"fps":1.0}"#), false).fps, 1.0);
+        assert_eq!(Settings::from_json(Some(r#"{"fps":2.0,"settingsVersion":1}"#), false).fps, 2.0);
         assert_eq!(Settings::from_json(Some("{bozuk"), true), Settings::default());
     }
 }

@@ -17,7 +17,7 @@ Kullanım:
     --tv HOST[:PORT]             TV adresi (verilmezse yerel ağda aranır; port varsayılan 8765)
     --dry-run                    Çevirmeden İngilizce metni gönderir (hizalama testi, kota harcamaz)
     --yerel                      DeepL yerine bilgisayardaki çeviri modelini kullanır (önce: ceviri model-indir)
-    --fps N                      Saniyedeki tur (varsayılan 2, en az 1)
+    --fps N                      Saniyedeki tur (varsayılan 5, en az 1)
     --keep \"AD1,AD2\"              Çevrilmeyecek adlar (oyun, karakter); PlayStation, PS5 vb. hep korunur
     --verbose                    Her turun süresini yazar
     --once                       Tek tur çalışıp çıkar
@@ -70,7 +70,7 @@ fn dump_dir(args: &[String]) -> Result<Option<PathBuf>, String> {
 fn run(args: &[String]) -> Result<(), String> {
     let dry_run = flag(args, "--dry-run");
     let verbose = flag(args, "--verbose");
-    let fps: f64 = option(args, "--fps").and_then(|v| v.parse().ok()).unwrap_or(2.0f64).max(1.0);
+    let fps: f64 = option(args, "--fps").and_then(|v| v.parse().ok()).unwrap_or(5.0f64).max(1.0);
     let title_bar = option(args, "--titlebar").and_then(|v| v.parse().ok());
 
     let keep: Vec<String> = option(args, "--keep").map(|v| v.split(',').map(str::to_string).collect()).unwrap_or_default();

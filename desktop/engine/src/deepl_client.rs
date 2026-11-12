@@ -1,8 +1,10 @@
 //! DeepL /v2/translate çağrısı (EN → TR). İstek/yanıt formatı `ceviri_core::deepl`'dedir.
 
+use std::collections::VecDeque;
+use std::sync::Mutex;
 use std::time::Duration;
 
-use ceviri_core::deepl;
+use ceviri_core::{deepl, terms};
 use ceviri_core::TranslationError;
 use ureq::Agent;
 
@@ -10,6 +12,8 @@ pub struct DeepLClient {
     key: String,
     endpoint: String,
     agent: Agent,
+    /// Son çevrilen replikler (İngilizce); sonraki isteğe bağlam olarak eklenir.
+    recent: Mutex<VecDeque<String>>,
 }
 
 impl DeepLClient {
@@ -27,7 +31,7 @@ impl DeepLClient {
             .http_status_as_error(false)
             .build()
             .into();
-        DeepLClient { key: key.into(), endpoint: endpoint.into(), agent }
+        DeepLClient { key: key.into(), endpoint: endpoint.into(), agent, recent: Mutex::new(VecDeque::new()) }
     }
 
     pub fn host(&self) -> &str {
@@ -41,13 +45,33 @@ impl DeepLClient {
             .post(&self.endpoint)
             .header("Authorization", &deepl::auth_header(&self.key))
             .header("Content-Type", "application/json")
-            .send(deepl::request_body(texts))
+            .send(deepl::request_body_with_context(texts, &self.context()))
             .map_err(|e| TranslationError::Network(e.to_string()))?;
         if let Some(error) = deepl::error_for_status(response.status().as_u16()) {
             return Err(error);
         }
         let body = response.body_mut().read_to_string().map_err(|_| TranslationError::InvalidResponse)?;
-        deepl::parse_response(&body)
+        let translations = deepl::parse_response(&body)?;
+        self.remember(texts);
+        Ok(translations)
+    }
+
+    fn context(&self) -> String {
+        self.recent.lock().unwrap().iter().cloned().collect::<Vec<_>>().join(" ")
+    }
+
+    fn remember(&self, texts: &[String]) {
+        let mut recent = self.recent.lock().unwrap();
+        for text in texts {
+            // İstek metni ad işaretli ve XML kaçışlıdır; bağlam düz metin olmalı.
+            let plain = terms::unprotect(text);
+            if deepl::is_context_worthy(&plain) && !recent.contains(&plain) {
+                recent.push_back(plain);
+            }
+        }
+        while recent.len() > deepl::CONTEXT_LINES || recent.iter().map(|t| t.chars().count()).sum::<usize>() > deepl::CONTEXT_CHARS && recent.len() > 1 {
+            recent.pop_front();
+        }
     }
 }
 
@@ -101,6 +125,25 @@ mod tests {
         let (headers, body) = requests.recv().unwrap();
         assert!(headers.iter().any(|h| h == "Authorization: DeepL-Auth-Key anahtar:fx" || h == "authorization: DeepL-Auth-Key anahtar:fx"), "{headers:?}");
         assert!(body.contains(r#""target_lang":"TR""#), "{body}");
+    }
+
+    #[test]
+    fn onceki_replikler_sonraki_istege_baglam_olur() {
+        let reply = r#"{"translations":[{"text":"x"}]}"#;
+        let (first, _first_requests) = fake_deepl(200, reply);
+        let (second, second_requests) = fake_deepl(200, reply);
+        let mut client = DeepLClient::with_endpoint("anahtar", first);
+
+        client.translate(&["Are you ready to leave?".into()]).unwrap();
+        client.translate(&["New Game".into()]).unwrap_err(); // sunucu tek istek karşılar: ağ hatası
+        client.endpoint = second;
+        client.translate(&["Not yet.".into()]).unwrap();
+
+        let (_, body) = second_requests.recv().unwrap();
+        let body: serde_json::Value = serde_json::from_str(&body).unwrap();
+        // Menü öğesi ve başarısız istek bağlama girmez.
+        assert_eq!(body["context"], "Are you ready to leave?");
+        assert_eq!(body["text"], serde_json::json!(["Not yet."]));
     }
 
     #[test]

@@ -17,7 +17,7 @@ const status = {
     tvAddress: "",
     translate: true,
     engine: "local",
-    fps: 2,
+    fps: 5,
     window: params.has("pc") ? "Hollow.exe" : "",
     regions: params.has("pc") ? { "hollow.exe": { x: 0.1, y: 0.72, width: 0.8, height: 0.22 } } : {},
     protectedTerms: ["It Takes Two", "May", "Cody"],
