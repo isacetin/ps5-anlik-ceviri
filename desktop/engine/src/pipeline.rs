@@ -9,7 +9,7 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use ceviri_core::{block_merger, focus, language, storage, terms, translator, OverlayBlock, ReadError, Rect, ScreenReader, StableBlock, Stabilizer, Terms, TranslationError, Translator};
+use ceviri_core::{block_merger, focus, glossary, language, storage, terms, translator, OverlayBlock, ReadError, Rect, ScreenReader, StableBlock, Stabilizer, Terms, TranslationError, Translator};
 
 use crate::tv_client::TvClient;
 
@@ -262,11 +262,24 @@ fn compose(config: &Config, fetcher: &Fetcher, stable: &[StableBlock], below: &H
     let english: Vec<&StableBlock> = stable.iter().filter(|b| !language::looks_turkish(&b.text) && !terms.is_only_terms(&b.text)).collect();
     // Önbellek ve DeepL işaretli hali görür; ad listesi değişince eski çeviri kullanılmaz.
     let keys: Vec<String> = english.iter().map(|b| terms.protect(&b.text)).collect();
-    let lookup = fetcher.translator.lock().unwrap().lookup(&keys, now);
+    // Yaygın menü kelimeleri hazır sözlükten gelir; yalnızca kalanlar çeviri modeline sorulur.
+    let ready: Vec<Option<&str>> = english.iter().map(|b| glossary::lookup(&b.text)).collect();
+    let wanted: Vec<String> = keys.iter().zip(&ready).filter(|(_, hit)| hit.is_none()).map(|(key, _)| key.clone()).collect();
+    let lookup = fetcher.translator.lock().unwrap().lookup(&wanted, now);
     if !lookup.to_fetch.is_empty() {
         spawn_fetch(fetcher, lookup.to_fetch, now, backend.clone());
     }
-    english.iter().zip(&keys).filter_map(|(b, key)| lookup.found.get(key).map(|t| overlay_block(b, &terms::unprotect(t), config.below && below.contains(&b.id)))).collect()
+    english
+        .iter()
+        .zip(keys.iter().zip(&ready))
+        .filter_map(|(b, (key, hit))| {
+            let text = match hit {
+                Some(text) => text.to_string(),
+                None => terms::unprotect(lookup.found.get(key)?),
+            };
+            Some(overlay_block(b, &text, config.below && below.contains(&b.id)))
+        })
+        .collect()
 }
 
 fn overlay_block(block: &StableBlock, text: &str, below: bool) -> OverlayBlock {
@@ -545,5 +558,17 @@ mod tests {
         // 0.7 + 0.04 yükseklik + 0.35 satırlık boşluk; boyut aynı.
         assert!((block.y - 0.754).abs() < 1e-9, "{}", block.y);
         assert!((block.x - 0.3).abs() < 1e-9 && (block.w - 0.4).abs() < 1e-9 && (block.h - 0.04).abs() < 1e-9);
+    }
+
+    #[test]
+    fn yaygin_menu_kelimesi_modele_sorulmadan_cevrilir() {
+        let (address, messages) = fake_tv(usize::MAX);
+        let backend: Backend = Arc::new(|_: &[String]| panic!("sözlükteki kelime modele gitmemeli"));
+        let config = Config { backend: Some(backend), ..fast() };
+        let reader = FakeReader { lines: vec![line("ReSume x", 0.5)], missing: 0, calls: 0 };
+
+        let (received, _) = run_until(reader, config, &messages, address, |m| !m.blocks.is_empty());
+
+        assert!(received.iter().any(|m| texts(m) == ["Devam Et"]));
     }
 }
