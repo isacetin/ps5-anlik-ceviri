@@ -2,11 +2,16 @@
 //! tabela, dükkan adı gibi oyun dünyasına ait yazı). Odak modunda yalnızca ilk ikisi çevrilir;
 //! diğerlerinin üstüne çizilmez, görüntü kapanmaz.
 //!
-//! Kesin bir tanıma değil, sezgisel kurallardır:
+//! Kesin bir tanıma değil, sezgisel kurallardır. Ayırt edici işaret harekettir: arayüz yazısı
+//! (menü, düğme ipucu, altyazı) ekranda sabit durur, oyun dünyasındaki yazı kamerayla kayar.
 //! - Cümle gibi duran metin (birkaç kelime ya da cümle noktalaması) altyazıdır.
-//! - Kısa metin ancak bir listenin parçasıysa menüdür: benzer boyda, hizalı en az üç kısa öğe alt
-//!   alta ya da yan yana durur ve yerinden oynamaz. Tek başına duran kısa yazı (tabela) atlanır.
-//! - Çok büyük yazı (oyun logosu, bölüm başlığı) atlanır.
+//! - Altyazı bölgesindeki (ekranın alt-orta kısmı) kısa metin de altyazıdır ("Yeah.", "Tommy!").
+//! - Diğer kısa metin, bir süredir yerinden oynamıyorsa arayüzdür (menü öğesi, "Resume" ipucu).
+//!   Hizalı bir listenin parçasıysa daha kısa beklenir.
+//! - Çok büyük yazı (oyun logosu, bölüm başlığı) ve ona bitişik küçük yazı (logonun alt satırı)
+//!   atlanır.
+//!
+//! Oyuncu dururken sabit kalan bir tabela arayüzden ayırt edilemez; bekleme süresi dolunca çevrilir.
 
 use crate::geometry::Rect;
 use crate::stabilizer::StableBlock;
@@ -15,7 +20,7 @@ use crate::stabilizer::StableBlock;
 pub enum Kind {
     /// Altyazı, görev açıklaması, ipucu: cümle.
     Dialogue,
-    /// Listedeki kısa menü öğesi.
+    /// Kısa arayüz yazısı: menü öğesi, düğme ipucu.
     Menu,
     /// Logo, tabela, tek başına etiket: çevrilmez.
     Other,
@@ -27,10 +32,16 @@ pub struct Options {
     pub max_line_height: f64,
     /// Bu kadar kelime ve üstü cümle sayılır.
     pub sentence_words: usize,
-    /// Menü listesi için gereken en az öğe sayısı (kendisi dahil).
+    /// Bu kadar öğe (kendisi dahil) hizalıysa liste sayılır.
     pub min_list_items: usize,
-    /// Menü öğesi en az bu kadar süredir yerinde duruyor olmalı (kamera ile kayan tabela elenir).
-    pub min_still_seconds: f64,
+    /// Listedeki kısa metin en az bu kadar süredir yerinde duruyor olmalı.
+    pub list_still_seconds: f64,
+    /// Tek başına duran kısa metin en az bu kadar süredir yerinde duruyor olmalı (kamerayla kayan
+    /// tabela elenir).
+    pub lone_still_seconds: f64,
+    /// Altyazı bölgesi: kutunun merkezi ekranın bu oranından aşağıda ve yatayda ortaya bu kadar yakın.
+    pub subtitle_top: f64,
+    pub subtitle_center: f64,
     /// Liste öğelerinin satır yükseklikleri oranı (büyük / küçük) en fazla bu kadar olabilir.
     pub max_height_ratio: f64,
     /// Alt alta iki öğe arasındaki boşluk, satır yüksekliğinin en fazla bu katı olabilir.
@@ -47,7 +58,10 @@ impl Default for Options {
             max_line_height: 0.07,
             sentence_words: 4,
             min_list_items: 3,
-            min_still_seconds: 0.5,
+            list_still_seconds: 0.4,
+            lone_still_seconds: 1.0,
+            subtitle_top: 0.6,
+            subtitle_center: 0.12,
             max_height_ratio: 1.3,
             max_item_gap: 3.5,
             align_tolerance: 1.0,
@@ -59,28 +73,51 @@ impl Default for Options {
 /// `blocks` ile aynı sırada tür listesi.
 pub fn classify(blocks: &[StableBlock], options: &Options) -> Vec<Kind> {
     let short: Vec<bool> = blocks.iter().map(|b| !is_sentence(&b.text, options)).collect();
+    let huge: Vec<&StableBlock> = blocks.iter().filter(|b| b.line_height > options.max_line_height).collect();
     blocks
         .iter()
         .enumerate()
         .map(|(index, block)| {
-            if block.line_height > options.max_line_height {
+            if block.line_height > options.max_line_height || huge.iter().any(|logo| attached(block, logo)) {
                 return Kind::Other;
             }
             if !short[index] {
                 return Kind::Dialogue;
             }
-            if !is_plain_latin(&block.text) || block.still_seconds < options.min_still_seconds {
+            if !is_plain_latin(&block.text) {
                 return Kind::Other;
+            }
+            if in_subtitle_zone(block.bbox, options) && block.still_seconds >= options.list_still_seconds * 0.5 {
+                return Kind::Dialogue;
             }
             let candidates: Vec<&StableBlock> =
                 blocks.iter().enumerate().filter(|(other, b)| short[*other] && similar_height(block, b, options)).map(|(_, b)| b).collect();
-            if column_size(block, &candidates, options) >= options.min_list_items || row_size(block, &candidates, options) >= options.min_list_items {
+            let listed = column_size(block, &candidates, options) >= options.min_list_items || row_size(block, &candidates, options) >= options.min_list_items;
+            let needed = if listed { options.list_still_seconds } else { options.lone_still_seconds };
+            if block.still_seconds >= needed {
                 Kind::Menu
             } else {
                 Kind::Other
             }
         })
         .collect()
+}
+
+fn in_subtitle_zone(bbox: Rect, options: &Options) -> bool {
+    let center_x = bbox.x + bbox.width / 2.0;
+    let center_y = bbox.y + bbox.height / 2.0;
+    center_y >= options.subtitle_top && (center_x - 0.5).abs() <= options.subtitle_center
+}
+
+/// Küçük yazı büyük bir logonun hemen altında/üstünde ve onunla yatayda örtüşüyor mu.
+fn attached(block: &StableBlock, logo: &StableBlock) -> bool {
+    if block.id == logo.id {
+        return false;
+    }
+    let (a, b) = (block.bbox, logo.bbox);
+    let overlaps = a.right().min(b.right()) > a.x.max(b.x);
+    let gap = (a.y - b.bottom()).max(b.y - a.bottom());
+    overlaps && gap <= block.line_height * 1.5
 }
 
 /// Birkaç kelime ya da cümle noktalamasıyla biten en az iki kelime.
@@ -199,13 +236,31 @@ mod tests {
     }
 
     #[test]
-    fn tek_basina_tabela_ve_dukkan_adi_atlanir() {
-        let blocks = [
+    fn kamerayla_kayan_tabela_ve_dukkan_adi_atlanir() {
+        let mut blocks = [
             block("a", "Ocean View Hotel", 0.2, 0.3, 0.2, 0.04),
             block("b", "PIZZA", 0.7, 0.5, 0.08, 0.05),
             block("c", "Is anybody out there?", 0.3, 0.85, 0.4, 0.035),
         ];
+        blocks[0].still_seconds = 0.4;
+        blocks[1].still_seconds = 0.0;
         assert_eq!(kinds(&blocks), [Kind::Other, Kind::Other, Kind::Dialogue]);
+    }
+
+    #[test]
+    fn tek_basina_duran_ipucu_bir_saniye_sabit_kalinca_cevrilir() {
+        // Gerçek kare: duraklatılmış ara sahnede sağ altta "Resume ⊗".
+        let mut prompt = [block("p", "ReSume x", 0.718, 0.848, 0.142, 0.041)];
+        assert_eq!(kinds(&prompt), [Kind::Menu]);
+        prompt[0].still_seconds = 0.6;
+        assert_eq!(kinds(&prompt), [Kind::Other]);
+    }
+
+    #[test]
+    fn altyazi_bolgesindeki_kisa_replik_diyalogdur() {
+        let mut line = [block("s", "Yeah.", 0.46, 0.86, 0.08, 0.035)];
+        line[0].still_seconds = 0.4;
+        assert_eq!(kinds(&line), [Kind::Dialogue]);
     }
 
     #[test]
@@ -214,6 +269,12 @@ mod tests {
         for item in &mut menu {
             item.still_seconds = 0.2;
         }
+        // Liste yarım saniyeye yakın durunca çevrilir; tek başına yazıdan daha çabuk.
+        let mut settled = gta_menu();
+        for item in &mut settled {
+            item.still_seconds = 0.5;
+        }
+        assert_eq!(kinds(&settled)[4], Kind::Menu);
         assert!(kinds(&menu).iter().all(|k| *k == Kind::Other));
     }
 
@@ -228,9 +289,9 @@ mod tests {
     }
 
     #[test]
-    fn iki_ogeli_grup_ve_kiril_okunan_yazi_menu_degildir() {
+    fn iki_ogeli_grup_menudur_kiril_okunan_yazi_degildir() {
         let pair = [block("a", "Yes", 0.4, 0.5, 0.04, 0.03), block("b", "No", 0.4, 0.56, 0.03, 0.03)];
-        assert_eq!(kinds(&pair), [Kind::Other, Kind::Other]);
+        assert_eq!(kinds(&pair), [Kind::Menu, Kind::Menu]);
 
         let mut menu = gta_menu();
         menu[5].text = "тар".into();

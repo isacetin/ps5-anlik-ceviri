@@ -520,7 +520,10 @@ mod tests {
     fn odak_modunda_tabela_cevrilmez_altyazi_cevrilir() {
         let (address, messages) = fake_tv(usize::MAX);
         let config = Config { backend: Some(echo()), focus: true, ..fast() };
-        let reader = FakeReader { lines: vec![line("Ocean View Hotel", 0.3), sentence("You shouldn't be here.", 0.8)], missing: 0, calls: 0 };
+        // Logo boyundaki yazı ve hemen altındaki satır (logonun parçası) atlanır.
+        let logo = TextLine { text: "Vice City".into(), bbox: Rect::new(0.05, 0.1, 0.3, 0.12), confidence: 0.9 };
+        let edition = TextLine { text: "DEFINITIVE EDITION".into(), bbox: Rect::new(0.08, 0.23, 0.2, 0.03), confidence: 0.9 };
+        let reader = FakeReader { lines: vec![logo, edition, sentence("You shouldn't be here.", 0.8)], missing: 0, calls: 0 };
 
         let (received, _) = run_until(reader, config, &messages, address, |m| !m.blocks.is_empty());
 
