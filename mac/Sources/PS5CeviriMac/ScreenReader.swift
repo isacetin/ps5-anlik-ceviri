@@ -61,7 +61,9 @@ public final class ScreenReader {
             throw ReaderError.cropFailed(video)
         }
         let captured = clock.now
-        let lines = try await recognizer.recognize(frame)
+        // Vision da nadiren yanıt vermeyebilir; takılan tur bırakılır, döngü devam eder.
+        let recognizer = recognizer
+        let lines = try await withTimeout(seconds: 5) { try await recognizer.recognize(frame) }
         return Reading(
             lines: lines,
             frame: frame,

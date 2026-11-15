@@ -22,6 +22,12 @@ func withTimeout<T: Sendable>(seconds: Double, _ operation: @escaping @Sendable 
     }
 }
 
+/// Sendable olmayan sistem nesnesini (SCShareableContent) `withTimeout` içinden geçirmek için;
+/// nesne yalnızca çağıran tarafından okunur.
+struct Unchecked<Value>: @unchecked Sendable {
+    let value: Value
+}
+
 private final class ResumeOnceThrowing<Value: Sendable>: Sendable {
     private let continuation: Mutex<CheckedContinuation<Value, Error>?>
 

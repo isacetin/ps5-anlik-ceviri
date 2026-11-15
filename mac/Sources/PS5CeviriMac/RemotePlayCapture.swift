@@ -36,7 +36,11 @@ public struct RemotePlayCapture: Sendable {
 
     /// Pencere ve tam ekranda olup olmadığı (tam ekranda başlık çubuğu yoktur).
     public func findWindowWithDisplayInfo() async throws -> (window: SCWindow, fullscreen: Bool) {
-        let content = try await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: true)
+        // Her turda çağrılır ve ara sıra hiç dönmez (oyun sırasında döngü burada kilitleniyordu);
+        // süre dolunca tur atlanır, bir sonraki turda yeniden sorulur.
+        let content = try await withTimeout(seconds: 3) {
+            Unchecked(value: try await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: true))
+        }.value
         let candidates = content.windows.filter {
             $0.owningApplication?.bundleIdentifier == bundleID && $0.frame.width >= 320 && $0.frame.height >= 180
         }

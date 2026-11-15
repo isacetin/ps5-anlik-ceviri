@@ -67,7 +67,9 @@ public func ceviriReaderFree(_ handle: UnsafeMutableRawPointer?) {
 public func ceviriReaderRead(_ handle: UnsafeMutableRawPointer?) -> UnsafeMutablePointer<CChar>? {
     guard let handle else { return encode(ErrorJSON(kind: "other", message: "geçersiz okuyucu")) }
     let box = Unmanaged<ReaderBox>.fromOpaque(handle).takeUnretainedValue()
-    let result = blocking { () async throws -> ReadingJSON in
+    // İçerideki adımların kendi süre sınırı var; bu, hiçbirinin yakalamadığı bir takılmada
+    // Rust döngüsünün sonsuza kadar beklememesi için son güvence.
+    let result = blocking(timeout: 20) { () async throws -> ReadingJSON in
         let reading = try await box.reader.read()
         box.last.withLock { $0 = reading.frame }
         return ReadingJSON(reading)
@@ -172,9 +174,14 @@ private struct MainThreadError: Error, CustomStringConvertible {
     var description: String { "köprü ana thread'den çağrıldı; ana thread olay döngüsünü çalıştırmalı" }
 }
 
+private struct StuckError: Error, CustomStringConvertible {
+    let seconds: Double
+    var description: String { "ekran okuma \(Int(seconds)) sn içinde yanıt vermedi; yeniden deneniyor" }
+}
+
 /// Async işi bitene kadar çağıran thread'i bloklar. Ana thread'de çağrılırsa @MainActor işler
 /// hiç çalışamayacağı için kilitlenmek yerine hata döner.
-private func blocking<T: Sendable>(_ operation: @escaping @Sendable () async throws -> T) -> Result<T, Error> {
+private func blocking<T: Sendable>(timeout: Double? = nil, _ operation: @escaping @Sendable () async throws -> T) -> Result<T, Error> {
     guard !Thread.isMainThread else { return .failure(MainThreadError()) }
     let done = DispatchSemaphore(value: 0)
     let result = NSLock.Protected<Result<T, Error>?>(nil)
@@ -184,7 +191,11 @@ private func blocking<T: Sendable>(_ operation: @escaping @Sendable () async thr
         result.withLock { $0 = value }
         done.signal()
     }
-    done.wait()
+    if let timeout {
+        guard done.wait(timeout: .now() + timeout) == .success else { return .failure(StuckError(seconds: timeout)) }
+    } else {
+        done.wait()
+    }
     return result.withLock { $0! }
 }
 
