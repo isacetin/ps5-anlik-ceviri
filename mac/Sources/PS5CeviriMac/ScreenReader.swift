@@ -1,6 +1,7 @@
 import CoreGraphics
 import Foundation
 import PS5CeviriCore
+import Synchronization
 // macOS 15 SDK'sında SCWindow henüz Sendable değil; Swift 6 bunu hata sayar (CI, Xcode 16).
 @preconcurrency import ScreenCaptureKit
 
@@ -63,6 +64,9 @@ public final class ScreenReader {
     private var lastImageSize: CGSize?
     /// İlk yazı tanıma çağrısı modeli yükler (~30 sn); o tamamlanana kadar süre sınırı geniştir.
     private var recognizerWarm = false
+    /// Süre sınırına takılan yazı tanıma arka planda sürmeye devam eder. O bitmeden yenisi
+    /// başlatılmaz: Vision kalıcı takılırsa her tur yeni bir istek ve kare kopyası birikmesin.
+    private let ocrGate = OCRGate()
 
     public init(bundleID: String = remotePlayBundleID, fps: Double = 2, titleBarOverride: Double? = nil) {
         capture = RemotePlayCapture(bundleID: bundleID)
@@ -100,9 +104,14 @@ public final class ScreenReader {
         let captured = clock.now
         // Vision da nadiren yanıt vermeyebilir; takılan tur bırakılır, döngü devam eder.
         let recognizer = recognizer
+        let gate = ocrGate
+        guard gate.enter() else { throw ReaderError.ocrFailed("yazı tanıma: önceki istek hâlâ sürüyor") }
         let lines: [TextLine]
         do {
-            lines = try await withTimeout(seconds: recognizerWarm ? 5 : 45) { try await recognizer.recognize(frame) }
+            lines = try await withTimeout(seconds: recognizerWarm ? 5 : 45) {
+                defer { gate.leave() }
+                return try await recognizer.recognize(frame)
+            }
         } catch {
             throw ReaderError.ocrFailed("yazı tanıma: \(error)")
         }
@@ -147,5 +156,23 @@ public final class ScreenReader {
 
     private static func milliseconds(_ duration: Duration) -> Int64 {
         duration.components.seconds * 1000 + duration.components.attoseconds / 1_000_000_000_000_000
+    }
+}
+
+/// Aynı anda tek yazı tanıma isteği; süre sınırı dolsa da istek bitene kadar kapı kapalı kalır.
+final class OCRGate: Sendable {
+    private let busy = Mutex(false)
+
+    /// Kapı boşsa alır ve `true` döner.
+    func enter() -> Bool {
+        busy.withLock { busy in
+            guard !busy else { return false }
+            busy = true
+            return true
+        }
+    }
+
+    func leave() {
+        busy.withLock { $0 = false }
     }
 }

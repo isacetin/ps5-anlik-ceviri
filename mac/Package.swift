@@ -17,5 +17,7 @@ let package = Package(
         .target(name: "CeviriBridge", dependencies: ["PS5CeviriMac"]),
         .executableTarget(name: "ps5ceviri", dependencies: ["PS5CeviriCore", "PS5CeviriMac"]),
         .testTarget(name: "PS5CeviriCoreTests", dependencies: ["PS5CeviriCore"]),
+        // Süre sınırı ve tek-OCR kapısı (gerçek ekran/Vision gerektirmez).
+        .testTarget(name: "PS5CeviriMacTests", dependencies: ["PS5CeviriMac"]),
     ]
 )

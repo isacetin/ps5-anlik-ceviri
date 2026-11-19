@@ -1110,18 +1110,45 @@ mod tests {
         // Replik her 3 turda (150 ms) değişir; 12. replik ekranda kalır.
         let reader = script(|round| {
             let line = ((round - 1) / 3).min(11);
-            Ok(reading(vec![sentence(&format!("This is dialogue line number {line}."), 0.8)]))
+            Ok(reading(vec![sentence(&format!("This is dialogue line number {}.", spell(line)), 0.8)]))
         });
         let config = Config { backend: Some(backend), ..fast() };
 
-        let events = run_events(Pipeline::new(reader, None, config), Duration::from_secs(6), |e| shown_text(e, "TR(This is dialogue line number 11.)"));
+        let events = run_events(Pipeline::new(reader, None, config), Duration::from_secs(6), |e| shown_text(e, "TR(This is dialogue line number one one.)"));
 
-        assert!(events.iter().any(|e| shown_text(e, "TR(This is dialogue line number 11.)")));
+        assert!(events.iter().any(|e| shown_text(e, "TR(This is dialogue line number one one.)")));
         // Ekrandan kalkmış replikler sıraya girmez: istenen her metin bir kez ve toplamda az.
         let asked = asked.lock().unwrap();
         let unique: HashSet<&String> = asked.iter().collect();
         assert_eq!(unique.len(), asked.len(), "aynı metin iki kez istenmemeli: {asked:?}");
         assert!(asked.len() < 12, "eski replikler kuyrukta birikmemeli: {asked:?}");
+    }
+
+    /// Sayıyı rakam rakam kelimeyle yazar (12 → "one two"): test replikleri yalnızca rakamla ayrılmasın.
+    fn spell(n: u64) -> String {
+        const WORDS: [&str; 10] = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine"];
+        n.to_string().bytes().map(|d| WORDS[(d - b'0') as usize]).collect::<Vec<_>>().join(" ")
+    }
+
+    #[test]
+    fn geri_sayim_her_saniye_ceviri_istegi_atmaz() {
+        let asked = Arc::new(Mutex::new(Vec::<String>::new()));
+        let log = asked.clone();
+        let backend: Backend = Arc::new(move |texts: &[String]| {
+            log.lock().unwrap().extend(texts.iter().cloned());
+            Ok(texts.iter().map(|t| t.replace("Respawning in", "Yeniden doğuş:").replace("seconds", "saniye")).collect())
+        });
+        // Sayaç her 10 turda (0,5 sn) bir azalır: 9, 8, … 1.
+        let reader = script(|round| Ok(reading(vec![sentence(&format!("Respawning in {} seconds", 9 - ((round - 1) / 10).min(8)), 0.8)])));
+        let config = Config { backend: Some(backend), ..fast() };
+
+        let events = run_events(Pipeline::new(reader, None, config), Duration::from_secs(10), |e| shown_text(e, "Yeniden doğuş: 1 saniye"));
+
+        // Yeni sayı ekrana gelir (eski sayı ekranda donup kalmaz) ama model bir kez sorulur.
+        assert!(events.iter().any(|e| shown_text(e, "Yeniden doğuş: 1 saniye")));
+        assert!(events.iter().any(|e| shown_text(e, "Yeniden doğuş: 5 saniye")));
+        let asked = asked.lock().unwrap();
+        assert!(asked.len() <= 2, "geri sayım her değişimde istek atmamalı: {asked:?}");
     }
 
     /// Uzun süreli çalışma: yakalama, OCR ve çeviri aralıklarla hata verirken (panik, zaman aşımı,
@@ -1161,7 +1188,8 @@ mod tests {
                 _ => {
                     let dialogue = round / 30;
                     let frame = FrameInfo { seq: Some(round), age_ms: Some(16), restarts: 0 };
-                    Ok(Reading { frame, ..reading(vec![sentence(&format!("Dialogue {dialogue}: keep moving forward."), 0.8), line("Inventory", 0.1)]) })
+                    // Replikler kelimeyle ayrılır (yalnızca rakamı farklı metin istek atmadan türetilir).
+                    Ok(Reading { frame, ..reading(vec![sentence(&format!("Dialogue {}: keep moving forward.", spell(dialogue)), 0.8), line("Inventory", 0.1)]) })
                 }
             }
         });

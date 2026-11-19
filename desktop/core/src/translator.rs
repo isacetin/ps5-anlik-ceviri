@@ -11,6 +11,9 @@
 //!   kota/anahtar hatasında 5 dk). İlk başarıda sayaç sıfırlanır.
 //! - Boş ya da kaynağın aynısı olan çeviri önbelleğe yazılmaz (yoksa o metin kalıcı olarak boş/
 //!   çevrilmemiş görünürdü); o metin bir süre bekletilip yeniden denenir.
+//! - Yalnızca rakamları farklı metin ("Respawn in 5" → "Respawn in 4", "2/5" → "3/5") önbellekteki
+//!   kardeşinin çevirisinden, rakamlar yerine konarak hemen üretilir; geri sayım her saniye
+//!   çeviri isteği atmaz. Çeviride rakamlar kaynaktakiyle aynı sırada değilse bu yapılmaz.
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fmt;
@@ -106,6 +109,8 @@ pub struct Translator {
     next_batch: u64,
     dirty: bool,
     stats: TranslatorStats,
+    /// Rakamlı metinlerin kalıbı ("Respawn in #") → önbellekteki bir kaynak metin.
+    templates: HashMap<String, String>,
 }
 
 impl Translator {
@@ -118,8 +123,10 @@ impl Translator {
     const MAX_COOLDOWNS: usize = 1000;
 
     pub fn new(cache: HashMap<String, String>) -> Translator {
+        let templates = cache.keys().filter_map(|key| Some((digit_template(key)?, key.clone()))).collect();
         Translator {
             cache,
+            templates,
             wanted: Vec::new(),
             in_flight: HashMap::new(),
             cooldown: HashMap::new(),
@@ -141,8 +148,8 @@ impl Translator {
             if !seen.insert(text) {
                 continue;
             }
-            if let Some(translation) = self.cache.get(text) {
-                found.insert(text.clone(), translation.clone());
+            if let Some(translation) = self.cache.get(text).cloned().or_else(|| self.derived_translation(text)) {
+                found.insert(text.clone(), translation);
             } else {
                 wanted.push(text.clone());
             }
@@ -150,6 +157,26 @@ impl Translator {
         self.stats.cache_hits += found.len() as u64;
         self.wanted = wanted;
         found
+    }
+
+    /// Yalnızca rakamları farklı, önbellekteki bir metnin çevirisinden bu metnin çevirisi.
+    fn derived_translation(&self, text: &str) -> Option<String> {
+        let source = self.templates.get(&digit_template(text)?)?;
+        let translation = self.cache.get(source)?;
+        let numbers = |s: &str| digit_runs(s).into_iter().map(|(a, b)| s[a..b].to_string()).collect::<Vec<_>>();
+        let (old, new) = (numbers(source), numbers(text));
+        if numbers(translation) != old || old.len() != new.len() {
+            return None;
+        }
+        let mut out = String::with_capacity(translation.len());
+        let mut last = 0;
+        for ((start, end), number) in digit_runs(translation).into_iter().zip(&new) {
+            out.push_str(&translation[last..start]);
+            out.push_str(number);
+            last = end;
+        }
+        out.push_str(&translation[last..]);
+        Some(out)
     }
 
     /// Önbellekteki çeviri (kuyruğa dokunmaz).
@@ -205,6 +232,9 @@ impl Translator {
     /// kayıtları kalkar (takıldığı için bırakılmış bir iş geç döndüyse sonuç yine kullanılır).
     /// Önbelleğe en az bir çeviri yazıldıysa `true`.
     pub fn complete(&mut self, batch: &Batch, result: Result<Vec<String>, TranslationError>, now: f64) -> bool {
+        // Takıldığı için bırakılmış (`expire`) işin geç gelen hatası, o arada çalışan yeni işleri
+        // genel beklemeye sokmamalı.
+        let current = batch.texts.iter().any(|text| self.in_flight.get(text).is_some_and(|(id, _)| *id == batch.id));
         for text in &batch.texts {
             if self.in_flight.get(text).is_some_and(|(id, _)| *id == batch.id) {
                 self.in_flight.remove(text);
@@ -222,6 +252,9 @@ impl Translator {
                 for (text, translation) in batch.texts.iter().zip(translations) {
                     if is_valid_translation(text, &translation) {
                         self.cooldown.remove(text);
+                        if let Some(template) = digit_template(text) {
+                            self.templates.insert(template, text.clone());
+                        }
                         self.cache.insert(text.clone(), translation);
                         self.stats.translated += 1;
                         stored = true;
@@ -251,8 +284,10 @@ impl Translator {
                         self.cool_down(text, now);
                     }
                 }
-                self.consecutive_failures += 1;
-                self.retry_after = now + Translator::backoff(&error, self.consecutive_failures);
+                if current {
+                    self.consecutive_failures += 1;
+                    self.retry_after = now + Translator::backoff(&error, self.consecutive_failures);
+                }
                 self.stats.last_error = Some(error);
                 false
             }
@@ -312,6 +347,43 @@ impl Translator {
             _ => doubling.min(30.0),
         }
     }
+}
+
+/// Metindeki ASCII rakam dizilerinin bayt aralıkları.
+fn digit_runs(text: &str) -> Vec<(usize, usize)> {
+    let mut runs = Vec::new();
+    let mut start = None;
+    for (index, c) in text.char_indices() {
+        match (c.is_ascii_digit(), start) {
+            (true, None) => start = Some(index),
+            (false, Some(s)) => {
+                runs.push((s, index));
+                start = None;
+            }
+            _ => {}
+        }
+    }
+    if let Some(s) = start {
+        runs.push((s, text.len()));
+    }
+    runs
+}
+
+/// Rakam dizileri `#` ile değiştirilmiş kalıp; rakam ya da harf yoksa `None`.
+fn digit_template(text: &str) -> Option<String> {
+    let runs = digit_runs(text);
+    if runs.is_empty() || !text.chars().any(char::is_alphabetic) {
+        return None;
+    }
+    let mut out = String::with_capacity(text.len());
+    let mut last = 0;
+    for (start, end) in runs {
+        out.push_str(&text[last..start]);
+        out.push('#');
+        last = end;
+    }
+    out.push_str(&text[last..]);
+    Some(out)
 }
 
 /// Çeviri gösterilmeye değer mi? Boş çeviri ve birkaç kelimelik metnin aynen geri dönmesi
@@ -533,6 +605,49 @@ mod tests {
             translator.complete(&batch, Ok(vec![String::new()]), i as f64);
         }
         assert!(translator.cooldown.len() <= Translator::MAX_COOLDOWNS);
+    }
+
+    #[test]
+    fn yalnizca_rakami_degisen_metin_istek_atmadan_cevrilir() {
+        let mut translator = Translator::new(HashMap::from([("Respawn in 5 seconds".into(), "5 saniye içinde yeniden doğacaksın".into())]));
+
+        let found = translator.request(&strings(&["Respawn in 4 seconds", "Respawn in 10 seconds"]), 0.0);
+
+        assert_eq!(found["Respawn in 4 seconds"], "4 saniye içinde yeniden doğacaksın");
+        assert_eq!(found["Respawn in 10 seconds"], "10 saniye içinde yeniden doğacaksın");
+        assert!(translator.take_batch(0.0, 50).is_none(), "geri sayım her saniye istek atmamalı");
+        assert!(translator.snapshot().len() == 1, "türetilen çeviri kalıcı önbelleğe yazılmaz");
+    }
+
+    #[test]
+    fn rakam_sirasi_degisen_ceviriden_turetilmez() {
+        // "2 of 5" → "5'te 2": sıra değiştiği için rakamlar güvenle yerine konamaz.
+        let mut translator = Translator::new(HashMap::new());
+        translator.request(&strings(&["Herb 2 of 5"]), 0.0);
+        let batch = translator.take_batch(0.0, 50).unwrap();
+        translator.complete(&batch, Ok(strings(&["Ot 5'te 2"])), 0.1);
+
+        assert!(translator.request(&strings(&["Herb 3 of 5"]), 0.2).is_empty());
+        assert_eq!(translator.take_batch(0.2, 50).unwrap().texts, strings(&["Herb 3 of 5"]));
+        // Rakamsız metin kalıp sayılmaz.
+        assert_eq!(digit_template("No digits"), None);
+        assert_eq!(digit_template("123"), None);
+    }
+
+    #[test]
+    fn birakilan_isin_gec_hatasi_yeni_isleri_bekletmez() {
+        let mut translator = Translator::new(HashMap::new());
+        translator.request(&strings(&["Hello"]), 0.0);
+        let stuck = translator.take_batch(0.0, 50).unwrap();
+        translator.expire(31.0, 30.0);
+        translator.request(&strings(&["Hello", "World"]), 31.0);
+        let retry = translator.take_batch(31.0, 50).unwrap();
+
+        translator.complete(&stuck, Err(TranslationError::Timeout), 32.0);
+
+        assert_eq!(translator.backoff_remaining(32.0), 0.0);
+        assert_eq!(translator.stats().timeouts, 1, "hata yine sayılır");
+        assert!(translator.complete(&retry, echo(&retry.texts), 32.5));
     }
 
     #[test]

@@ -124,6 +124,9 @@ aşaması ayrı ayrı korunur (`desktop/engine/src/pipeline.rs`, `translation.rs
   kapatılır.
 - İlk OCR çağrısı Vision modelini yükler (~30 sn); bu çağrının süre sınırı 45 sn, sonrakiler 5 sn.
   (0.4.1'de ilk çağrı da 5 sn sınırına takılıp açılışta hata notu gösteriyordu.)
+- Aynı anda tek yazı tanıma isteği (`OCRGate`): süre sınırı dolan istek arka planda sürer; o
+  bitmeden yenisi başlatılmaz ("önceki istek hâlâ sürüyor" hatası). Eskiden Vision kalıcı
+  takılırsa her tur yeni bir takılı istek ve kare kopyası (1080p'de ~8 MB) birikiyordu.
 - Köprü okumanın yanında karenin sıra numarasını, yaşını ve akışın kaç kez yeniden başlatıldığını
   döner (`Reading.frame`).
 
@@ -141,6 +144,12 @@ aşaması ayrı ayrı korunur (`desktop/engine/src/pipeline.rs`, `translation.rs
   çevrilmez.
 - Sabitleyicide yalnızca bir rakamı değişen metin ("Toplanan 2/5" → "3/5") artık yeni metin
   sayılır; eskiden OCR oynaması sanılıp yeni metin hiç kabul edilmiyordu.
+- Yalnızca rakamları farklı metnin çevirisi önbellekteki kardeşinden, rakamlar yerine konarak
+  üretilir ("Respawn in 5" → "Respawn in 4"): geri sayım her saniye çeviri isteği atmaz. Çeviride
+  rakamlar kaynaktakiyle aynı sırada değilse ("2 of 5" → "5'te 2") yapılmaz, model sorulur.
+  Türetilen çeviri kalıcı önbelleğe yazılmaz.
+- Takıldığı için bırakılmış işin geç gelen hatası genel beklemeyi başlatmaz (o arada çalışan yeni
+  işler bekletilmesin); hata sayaçta yine görünür.
 
 **Çeviri (`engine/src/translation.rs`, `core/src/translator.rs`):**
 
