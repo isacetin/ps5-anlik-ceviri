@@ -168,7 +168,9 @@ impl Stabilizer {
 }
 
 /// Noktalama/boşluk/büyük-küçük harf farkı ve aynı uzunlukta tek tük harf oynaması aynı
-/// metin sayılır. Uzunluk değişirse (daktilo efekti) farklı metindir.
+/// metin sayılır. Uzunluk değişirse (daktilo efekti) farklı metindir. Bir rakamın başka bir
+/// rakama dönmesi OCR oynaması değil gerçek değişikliktir ("2/5" → "3/5", "Bölüm 3" → "Bölüm 4");
+/// OCR'ın karıştırdığı çiftler harf↔rakam ya da harf↔harftir ("l"/"1", "O"/"0").
 pub fn same_text(a: &str, b: &str) -> bool {
     let left: Vec<char> = normalize(a).chars().collect();
     let right: Vec<char> = normalize(b).chars().collect();
@@ -178,8 +180,11 @@ pub fn same_text(a: &str, b: &str) -> bool {
     if left.len() != right.len() || left.is_empty() {
         return false;
     }
-    let differences = left.iter().zip(&right).filter(|(x, y)| x != y).count();
-    differences <= (left.len() / 20).max(1)
+    let differing: Vec<(&char, &char)> = left.iter().zip(&right).filter(|(x, y)| x != y).collect();
+    if differing.iter().any(|(x, y)| x.is_ascii_digit() && y.is_ascii_digit()) {
+        return false;
+    }
+    differing.len() <= (left.len() / 20).max(1)
 }
 
 /// Türkçe kurallarla: "KAPI KİLİTLİ" ile "kapı kilitli" aynı sayılır (I→ı, İ→i).
@@ -347,6 +352,35 @@ mod tests {
 
         assert_eq!(shown.iter().map(|b| b.text.as_str()).collect::<HashSet<_>>(), HashSet::from(["Top", "Bottom"]));
         assert_eq!(shown.iter().map(|b| &b.id).collect::<HashSet<_>>().len(), 2);
+    }
+
+    #[test]
+    fn yalnizca_bir_rakami_degisen_metin_yeni_metindir() {
+        assert!(!same_text("Collect the herbs 2/5", "Collect the herbs 3/5"));
+        assert!(!same_text("Chapter 3", "Chapter 4"));
+        // OCR'ın harf/rakam karıştırması aynı metin sayılır.
+        assert!(same_text("The gate is locked.", "The gate is 1ocked."));
+        assert!(same_text("Room 101 is open", "Room 1O1 is open"));
+
+        let mut stabilizer = Stabilizer::new();
+        stabilizer.update(&[block("Collect the herbs 2/5")], 0.0);
+        stabilizer.update(&[block("Collect the herbs 2/5")], 0.5);
+        stabilizer.update(&[block("Collect the herbs 3/5")], 1.0);
+        assert_eq!(texts(&stabilizer.update(&[block("Collect the herbs 3/5")], 1.5)), ["Collect the herbs 3/5"]);
+    }
+
+    #[test]
+    fn ayni_uzunlukta_ardisik_replikler_takilmaz() {
+        // Aynı yerde, aynı uzunlukta, yalnızca bir rakamı farklı replikler art arda.
+        let mut stabilizer = Stabilizer::new();
+        let mut now = 0.0;
+        for n in 0..5 {
+            let text = format!("Objective {n}: reach the tower");
+            stabilizer.update(&[block(&text)], now);
+            let shown = stabilizer.update(&[block(&text)], now + 0.4);
+            assert_eq!(texts(&shown), [text.as_str()]);
+            now += 1.0;
+        }
     }
 
     #[test]

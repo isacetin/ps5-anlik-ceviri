@@ -59,17 +59,20 @@ public func ceviriReaderNew(_ bundleID: UnsafePointer<CChar>?, _ fps: Double, _ 
 public func ceviriReaderFree(_ handle: UnsafeMutableRawPointer?) {
     guard let handle else { return }
     let box = Unmanaged<ReaderBox>.fromOpaque(handle).takeRetainedValue()
-    _ = blocking { await box.reader.stop() }
+    // Takılı bir akışın kapanması çağıranı (iş hattını) sonsuza kadar bekletmesin.
+    _ = blocking(timeout: 5) { await box.reader.stop() }
 }
 
-/// Bir tur: {"reading": {...}} ya da {"error": {"kind": "windowNotFound" | "noFrameYet" | "other", ...}}.
+/// Bir tur: {"reading": {...}} ya da
+/// {"error": {"kind": "windowNotFound" | "noFrameYet" | "busy" | "ocr" | "other", ...}}.
 @_cdecl("ceviri_reader_read")
 public func ceviriReaderRead(_ handle: UnsafeMutableRawPointer?) -> UnsafeMutablePointer<CChar>? {
     guard let handle else { return encode(ErrorJSON(kind: "other", message: "geçersiz okuyucu")) }
     let box = Unmanaged<ReaderBox>.fromOpaque(handle).takeUnretainedValue()
-    // İçerideki adımların kendi süre sınırı var; bu, hiçbirinin yakalamadığı bir takılmada
-    // Rust döngüsünün sonsuza kadar beklememesi için son güvence.
-    let result = blocking(timeout: 20) { () async throws -> ReadingJSON in
+    // İçerideki adımların kendi süre sınırı var (pencere 3, akış 2+5, OCR 5 sn; ilk OCR model
+    // yüklendiği için 45 sn); bu, hiçbirinin yakalamadığı bir takılmada Rust döngüsünün sonsuza
+    // kadar beklememesi için son güvence. Süre dolarsa okuyucu bir sonraki çağrıda "busy" döner.
+    let result = blocking(timeout: 60) { () async throws -> ReadingJSON in
         let reading = try await box.reader.read()
         box.last.withLock { $0 = reading.frame }
         return ReadingJSON(reading)
@@ -132,6 +135,9 @@ private struct ReadingJSON: Encodable {
     let captureMs: Int64
     let ocrMs: Int64
     let screen: BoxJSON
+    let frameSeq: UInt64
+    let frameAgeMs: Int64
+    let streamRestarts: UInt64
 
     init(_ reading: Reading) {
         lines = reading.lines.map {
@@ -144,6 +150,9 @@ private struct ReadingJSON: Encodable {
         ocrMs = reading.ocrMilliseconds
         let rect = reading.screenRect
         screen = BoxJSON(x: rect.x, y: rect.y, w: rect.width, h: rect.height)
+        frameSeq = reading.frameSequence
+        frameAgeMs = Int64((reading.frameAge * 1000).rounded())
+        streamRestarts = reading.streamRestarts
     }
 }
 
@@ -160,6 +169,8 @@ private struct ErrorJSON: Encodable {
         switch error {
         case CaptureError.windowNotFound: kind = "windowNotFound"
         case ReaderError.noFrameYet: kind = "noFrameYet"
+        case ReaderError.busy: kind = "busy"
+        case ReaderError.ocrFailed: kind = "ocr"
         default: kind = "other"
         }
         message = "\(error)"

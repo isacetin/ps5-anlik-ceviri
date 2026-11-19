@@ -96,8 +96,10 @@ public struct Stabilizer: Sendable {
         let right = normalize(b)
         if left == right { return true }
         guard left.count == right.count, !left.isEmpty else { return false }
-        let differences = zip(left, right).filter { $0 != $1 }.count
-        return differences <= max(1, left.count / 20)
+        let differing = zip(left, right).filter { $0 != $1 }
+        // Rakamın başka rakama dönmesi OCR oynaması değil gerçek değişikliktir ("2/5" → "3/5").
+        if differing.contains(where: { $0.isASCII && $0.isNumber && $1.isASCII && $1.isNumber }) { return false }
+        return differing.count <= max(1, left.count / 20)
     }
 
     /// Türkçe yerel ayarla: "KAPI KİLİTLİ" ile "kapı kilitli" aynı sayılır (I→ı, İ→i).

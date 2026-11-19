@@ -13,7 +13,7 @@ use std::ffi::{c_char, c_void, CStr, CString};
 use std::path::Path;
 use std::ptr::NonNull;
 
-use ceviri_core::{ReadError, Reading, Rect, ScreenReader, TextLine};
+use ceviri_core::{FrameInfo, ReadError, Reading, Rect, ScreenReader, TextLine};
 use serde::{Deserialize, Serialize};
 
 pub const REMOTE_PLAY_BUNDLE_ID: &str = "com.playstation.RemotePlay";
@@ -139,6 +139,13 @@ struct ReadingJson {
     capture_ms: u64,
     ocr_ms: u64,
     screen: Option<BoxJson>,
+    /// Eski köprü sürümlerinde yok.
+    #[serde(default)]
+    frame_seq: Option<u64>,
+    #[serde(default)]
+    frame_age_ms: Option<u64>,
+    #[serde(default)]
+    stream_restarts: Option<u64>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -170,6 +177,8 @@ fn parse_reading(json: &str) -> Result<Reading, ReadError> {
         return Err(match error.kind.as_str() {
             "windowNotFound" => ReadError::WindowNotFound(error.message),
             "noFrameYet" => ReadError::NoFrameYet,
+            "busy" => ReadError::Busy,
+            "ocr" => ReadError::Ocr(error.message),
             _ => ReadError::Other(error.message),
         });
     }
@@ -186,6 +195,7 @@ fn parse_reading(json: &str) -> Result<Reading, ReadError> {
         capture_ms: reading.capture_ms,
         ocr_ms: reading.ocr_ms,
         screen: reading.screen.map(|b| Rect::new(b.x, b.y, b.w, b.h)),
+        frame: FrameInfo { seq: reading.frame_seq, age_ms: reading.frame_age_ms, restarts: reading.stream_restarts.unwrap_or(0) },
     })
 }
 
@@ -207,7 +217,7 @@ mod tests {
     fn kopru_okuma_yaniti_cozulur() {
         let json = r#"{"reading":{"lines":[{"text":"Play Local","x":0.1,"y":0.5,"w":0.2,"h":0.03,"confidence":1}],
             "videoWidth":1920,"videoHeight":1080,"fullscreen":true,"captureMs":3,"ocrMs":95,
-            "screen":{"x":100,"y":28,"w":960,"h":540}}}"#;
+            "screen":{"x":100,"y":28,"w":960,"h":540},"frameSeq":42,"frameAgeMs":17,"streamRestarts":1}}"#;
 
         let reading = parse_reading(json).unwrap();
 
@@ -217,6 +227,13 @@ mod tests {
         assert_eq!((reading.video_width, reading.video_height, reading.fullscreen), (1920, 1080, true));
         assert_eq!((reading.capture_ms, reading.ocr_ms), (3, 95));
         assert_eq!(reading.screen, Some(Rect::new(100.0, 28.0, 960.0, 540.0)));
+        assert_eq!(reading.frame, FrameInfo { seq: Some(42), age_ms: Some(17), restarts: 1 });
+    }
+
+    #[test]
+    fn eski_kopru_yaniti_tazelik_bilgisi_olmadan_cozulur() {
+        let json = r#"{"reading":{"lines":[],"videoWidth":1920,"videoHeight":1080,"fullscreen":true,"captureMs":3,"ocrMs":95}}"#;
+        assert_eq!(parse_reading(json).unwrap().frame, FrameInfo::default());
     }
 
     #[test]
@@ -225,6 +242,8 @@ mod tests {
 
         assert_eq!(error("windowNotFound"), ReadError::WindowNotFound("m".into()));
         assert_eq!(error("noFrameYet"), ReadError::NoFrameYet);
+        assert_eq!(error("busy"), ReadError::Busy);
+        assert_eq!(error("ocr"), ReadError::Ocr("m".into()));
         assert_eq!(error("other"), ReadError::Other("m".into()));
     }
 }

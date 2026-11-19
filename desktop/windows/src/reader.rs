@@ -11,7 +11,7 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 
 use ceviri_core::geometry::{client_rect, sub_rect, video_rect};
-use ceviri_core::{ReadError, Reading, Rect, ScreenReader, SharedRegion};
+use ceviri_core::{FrameInfo, ReadError, Reading, Rect, ScreenReader, SharedRegion};
 use image::{imageops, RgbaImage};
 use windows::Media::Ocr::OcrEngine;
 use windows::Win32::Foundation::RECT;
@@ -234,7 +234,7 @@ impl ScreenReader for WindowsScreenReader {
         );
 
         let prepared = prepare_for_ocr(&video, self.ocr_scale, self.max_dimension);
-        let lines = ocr::recognize(&self.engine, &prepared).map_err(|e| ReadError::Other(format!("OCR hatası: {e}")))?;
+        let lines = ocr::recognize(&self.engine, &prepared).map_err(|e| ReadError::Ocr(format!("OCR hatası: {e}")))?;
         let reading = Reading {
             lines,
             video_width: video.width(),
@@ -243,6 +243,7 @@ impl ScreenReader for WindowsScreenReader {
             capture_ms: (captured - start).as_millis() as u64,
             ocr_ms: captured.elapsed().as_millis() as u64,
             screen: Some(screen),
+            frame: FrameInfo::default(),
         };
         self.last_video = Some(video);
         Ok(reading)

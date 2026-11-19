@@ -27,15 +27,18 @@ Rust karşılıkları (`desktop/core`) aynı kuralları ve aynı testleri taşı
 
 Saniyede 5 kez (ayarlanabilir) şu döngü döner:
 
-1. **Bak:** Mac, Remote Play penceresinin anlık görüntüsünü alır ve içinden sadece oyun görüntüsünü
-   (16:9 alan) keser; başlık çubuğu ve kenardaki siyah bantlar atılır.
+1. **Bak:** Mac, Remote Play penceresinin en son karesini alır ve içinden sadece oyun görüntüsünü
+   (16:9 alan) keser; başlık çubuğu ve kenardaki siyah bantlar atılır. Karenin gerçekten yeni olup
+   olmadığı (sıra numarası, yaşı) da bilinir: donmuş görüntü "çalışıyor" sanılmaz.
 2. **Oku:** Apple'ın yazı tanıma motoru (Vision) görüntüdeki tüm yazıları ve **ekrandaki yerlerini** bulur.
 3. **Düzenle:** Alt alta duran ve aynı paragrafa ait satırlar birleştirilir (diyalog tek cümle olarak
    çevrilsin diye). Menü öğeleri ayrı kalır.
 4. **Bekle:** Bir yazı iki tur boyunca değişmeden kalınca "hazır" sayılır. Böylece harf harf yazılan
    diyaloglar yazımı bitmeden çevrilmez, OCR'ın tek karelik hataları ekranda titreme yapmaz.
-5. **Çevir:** Hazır yazı daha önce çevrildiyse hafızadan alınır; çevrilmediyse DeepL'e gönderilir.
-   PS5'in kendi Türkçe menüleri çeviriye hiç gönderilmez.
+5. **Çevir:** Hazır yazı daha önce çevrildiyse hafızadan alınır; çevrilmediyse ayrı çalışan çeviri
+   işçisine (yerel model ya da DeepL) verilir. Okuma çeviriyi beklemez; çeviri gelince hemen
+   gösterilir. Yalnızca o an ekranda olan yazılar istenir, ekrandan kalkmış eski yazılar kuyrukta
+   beklemez. PS5'in kendi Türkçe menüleri çeviriye hiç gönderilmez.
 6. **Gönder:** Çeviriler, ekrandaki konumlarıyla birlikte (ekranın yüzdesi olarak) TV'ye gönderilir.
 7. **Çiz:** TV uygulaması her yazıyı orijinalin tam üstüne, koyu bir kutu içinde, okunaklı boyutta çizer.
 
@@ -96,6 +99,76 @@ SCStream (pencere akışı) ─▶ 16:9 video alanı ─▶ Vision OCR ─▶ Bl
   `--tv IP` ile elle verilir.
 - **Zaman aşımı (`withTimeout`):** ScreenCaptureKit çağrıları bazen hiç dönmüyor; task group yerine
   ilk sonuçla devam eden bir continuation yarışı kullanılır.
+
+### Masaüstü uygulaması: uzun süreli çalışma, kendiliğinden toparlanma ve teşhis
+
+Oyun saatlerce sürer; çevirinin "Çalışıyor" görünürken sessizce durmaması için iş hattının her
+aşaması ayrı ayrı korunur (`desktop/engine/src/pipeline.rs`, `translation.rs`,
+`mac/Sources/PS5CeviriMac`).
+
+**Yakalama (Mac, Swift):**
+
+- Pencere listesi sorgusu (`SCShareableContent`) her turda değil, saniyede bir (ya da akış durunca,
+  kare boyutu değişince) yapılır. Bu çağrı ara sıra hiç dönmüyordu (0.4.1'de süre sınırı eklendi);
+  seyrek çağrı takılma ihtimalini ve işlemci yükünü azaltır.
+- Akış **takılırsa** yeniden başlatılır: `SCStream` 4 sn hiç geri çağrı (boş/"idle" kare dahil)
+  göndermezse akış kapatılıp açılır. Art arda takılmalarda bekleme 4, 8, 16… sn (en çok 60) olur;
+  akış kare göndermeye başlayınca sıfırlanır. Ekran değişmiyorsa akış "idle" kare gönderir; bu
+  takılma sayılmaz, teşhiste "görüntü değişmiyor" olarak görünür.
+- OCR'a giden kare akışın tamponundan **kopyalanır**. `SCStream`'in tampon havuzu küçüktür
+  (`queueDepth`); tamponu gösteren her `CGImage` o tamponu akıştan alıkoyar. Süre sınırına takılıp
+  geride bırakılan OCR işleri tamponları tutarsa akış yeni kare yazamaz ve görüntü donardı.
+- Aynı anda tek okuma: köprünün süre sınırı (60 sn) dolduktan sonra gelen yeni okuma isteği, eski
+  okuma sürerken `busy` döner. Eskiden iki okuma iç içe geçip ikinci bir `SCStream` açabiliyor ve
+  eski akış kapatılmadan arka planda kalabiliyordu. Başlatması süre sınırına takılan akış da
+  kapatılır.
+- İlk OCR çağrısı Vision modelini yükler (~30 sn); bu çağrının süre sınırı 45 sn, sonrakiler 5 sn.
+  (0.4.1'de ilk çağrı da 5 sn sınırına takılıp açılışta hata notu gösteriyordu.)
+- Köprü okumanın yanında karenin sıra numarasını, yaşını ve akışın kaç kez yeniden başlatıldığını
+  döner (`Reading.frame`).
+
+**İş hattı (Rust):**
+
+- Bir turdaki beklenmeyen hata (panik) yalnızca o turu atlatır; döngü sürer, teşhiste
+  "kendiliğinden toparlanma" olarak sayılır. İş hattı thread'inin kendisi de korunur: eskiden
+  orada bir panik arayüzü "Çalışıyor"da bırakıyor, yeniden başlatmaya da izin vermiyordu.
+- Okuma üst üste 20 sn başarısız olursa okuyucu (yakalama akışı + OCR) aynı ayarlarla baştan
+  kurulur; denemeler arası süre her seferinde ikiye katlanır (en çok 5 dk). Pencerenin ekranda
+  olmaması arıza sayılmaz.
+- Okuma bir anlık başarısız olursa son çeviriler 1,5 sn ekranda tutulur (titreme olmaz).
+- OCR satırları birleştirmeden önce temizlenir (`core/src/ocr_text.rs`): fazla boşluk ve görünmez
+  karakterler atılır, kelime başındaki `|` → `I` ("|'m" → "I'm"). Harfsiz metin ("100", "3/5")
+  çevrilmez.
+- Sabitleyicide yalnızca bir rakamı değişen metin ("Toplanan 2/5" → "3/5") artık yeni metin
+  sayılır; eskiden OCR oynaması sanılıp yeni metin hiç kabul edilmiyordu.
+
+**Çeviri (`engine/src/translation.rs`, `core/src/translator.rs`):**
+
+- Sabit sayıda işçi thread'i (yerel modelde 1, DeepL'de 2). Eskiden çevrilecek yeni metin olan her
+  turda yeni bir thread açılıyordu.
+- Kuyruk, o an ekranda olan çevrilmemiş metinlerdir; her tur yeniden kurulur. İşçi boşalınca en
+  güncel ekranı çevirir, ekrandan kalkmış replikler istenmez.
+- Hata sonrasında üstel bekleme: genel hatalarda 1, 2, 4… sn (en çok 30), 429'da 5, 10… sn (en çok
+  60), kota/anahtar hatasında 5 dk. İlk başarıda sıfırlanır. DeepL isteği 8 sn'de (bağlantı 3 sn)
+  zaman aşımına uğrar ve ayrı sayılır.
+- Boş ya da kaynağın aynısı dönen (birkaç kelimelik) çeviri önbelleğe yazılmaz. Eskiden yerel model
+  boş çeviri döndürdüğünde bu boş sonuç kalıcı önbelleğe yazılıyor ve o yazı bir daha hiç
+  çevrilmiyordu. Böyle metinler 2, 4 sn sonra yeniden denenir; 3 kez başarısız olursa 2 dk beklenir.
+- Arka uç panik yaparsa işçi ölmez. Bir parti 20 sn'den uzun sürerse işçi "takıldı" sayılır,
+  metinleri serbest bırakılır ve yerine yeni işçi açılır (10 dk'da en fazla 3 kez).
+- Önbellek diske ayrı thread'de en sık 5 sn'de bir, kapanışta da son haliyle yazılır. Eskiden her
+  çeviriden sonra tüm önbellek, birden çok thread'den aynı geçici dosyaya yazılıyordu.
+
+**Teşhis paneli:** İş hattı saniyede bir `Event::Health` (`core/src/health.rs`, `Diagnostics`)
+gönderir; arayüzdeki **Teşhis** bölümü bunu gösterir. Özet cümle şu durumları ayırır: pencere yok,
+yakalama çalışmıyor, yakalama var ama OCR çalışmıyor, görüntü geliyor ama değişmiyor, çeviri servisi
+çalışmıyor, çeviriler hazır ama TV'ye gitmiyor, metin çevriliyor, yazı bulundu ama ayıklandı, ekranda
+yazı yok, çeviriler gösteriliyor. Ayrıca: okuma/kare hızı, son karenin yaşı, OCR ve çeviri süreleri,
+satır/blok/ayıklanan sayıları, önbellekten karşılanan metin, kuyruk, işçi durumu, hata/zaman
+aşımı/429/yeniden deneme sayıları, akış yeniden başlatmaları, kendiliğinden toparlanmalar (son 30
+kayıt) ve bellek. Hata notları 20 sn sonra kendiliğinden kalkar; kalıcı sorun panelde görünür.
+`CEVIRI_DEBUG=1` ile teşhis ve toparlanma kayıtları ayrıca standart hata çıkışına yazılır;
+varsayılan olarak kapalıdır, dosyaya log yazılmaz.
 
 ### TV tarafı: uygulama
 
@@ -303,6 +376,17 @@ cd mac && swift test
 ```bash
 cd desktop && cargo test --workspace
 ```
+
+Uzun süreli (soak) test: iş hattı, okuma ve çeviri aralıklarla hata verirken (panik, zaman aşımı,
+429/500, boş yanıt, takılan istek) yeni repliklerin çevrilmeye devam ettiğini, kuyruğun ve thread
+sayısının büyümediğini doğrular. Normal test koşusunda 6 sn sürer; 30 dk için:
+
+```bash
+cd desktop && CEVIRI_SOAK_SECS=1800 cargo test --release -p ceviri-engine uzun_sureli -- --nocapture
+```
+
+Mac'e özel Rust kodunu başka bir işletim sisteminden denetlemek için (Swift derlenmez, bağlama
+yapılmaz): `CEVIRI_SWIFT_ATLA=1 cargo check --target aarch64-apple-darwin -p ceviri-mac`.
 
 TV tarafında 31 test bulunur: JSON parse, piksel dönüşümü, 3 sn timeout ve heartbeat (sanal zamanla),
 seq kuralı, FontFitter ve kutu genişletme. Mac tarafında 38 test bulunur: video alanı, Vision koordinat

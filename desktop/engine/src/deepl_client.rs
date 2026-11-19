@@ -26,7 +26,10 @@ impl DeepLClient {
     /// Testler için: isteği başka bir sunucuya gönderir.
     pub fn with_endpoint(key: impl Into<String>, endpoint: impl Into<String>) -> DeepLClient {
         let agent = Agent::config_builder()
-            .timeout_global(Some(Duration::from_secs(10)))
+            // Oyun sırasında birkaç saniyeden eski çeviri işe yaramaz; takılan istek kuyruğu
+            // bekletmesin. Hata olursa çeviri işçisi bekleyip yeniden dener.
+            .timeout_connect(Some(Duration::from_secs(3)))
+            .timeout_global(Some(Duration::from_secs(8)))
             // 4xx/5xx de yanıt olarak gelsin; durum kodu DeepL hatasına çevrilir.
             .http_status_as_error(false)
             .build()
@@ -46,11 +49,14 @@ impl DeepLClient {
             .header("Authorization", &deepl::auth_header(&self.key))
             .header("Content-Type", "application/json")
             .send(deepl::request_body_with_context(texts, &self.context()))
-            .map_err(|e| TranslationError::Network(e.to_string()))?;
+            .map_err(network_error)?;
         if let Some(error) = deepl::error_for_status(response.status().as_u16()) {
             return Err(error);
         }
-        let body = response.body_mut().read_to_string().map_err(|_| TranslationError::InvalidResponse)?;
+        let body = response.body_mut().read_to_string().map_err(|e| match network_error(e) {
+            TranslationError::Timeout => TranslationError::Timeout,
+            _ => TranslationError::InvalidResponse,
+        })?;
         let translations = deepl::parse_response(&body)?;
         self.remember(texts);
         Ok(translations)
@@ -72,6 +78,15 @@ impl DeepLClient {
         while recent.len() > deepl::CONTEXT_LINES || recent.iter().map(|t| t.chars().count()).sum::<usize>() > deepl::CONTEXT_CHARS && recent.len() > 1 {
             recent.pop_front();
         }
+    }
+}
+
+/// Zaman aşımı ayrı sayılır (teşhis ekranında "zaman aşımı" olarak görünür).
+fn network_error(error: ureq::Error) -> TranslationError {
+    match error {
+        ureq::Error::Timeout(_) => TranslationError::Timeout,
+        ureq::Error::Io(io) if matches!(io.kind(), std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock) => TranslationError::Timeout,
+        other => TranslationError::Network(other.to_string()),
     }
 }
 
@@ -152,6 +167,38 @@ mod tests {
         let client = DeepLClient::with_endpoint("anahtar", endpoint);
 
         assert_eq!(client.translate(&["Hello".into()]), Err(TranslationError::QuotaExceeded));
+    }
+
+    #[test]
+    fn yanit_vermeyen_sunucu_zaman_asimi_verir() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let endpoint = format!("http://{}/v2/translate", listener.local_addr().unwrap());
+        // Bağlantıyı kabul eder ama hiç yanıt vermez.
+        thread::spawn(move || {
+            let _held: Vec<_> = listener.incoming().take(1).collect();
+            thread::sleep(Duration::from_secs(20));
+        });
+        let client = DeepLClient::with_endpoint("a", endpoint);
+
+        let started = std::time::Instant::now();
+        assert_eq!(client.translate(&["x".into()]), Err(TranslationError::Timeout));
+        assert!(started.elapsed() < Duration::from_secs(10), "{:?}", started.elapsed());
+    }
+
+    #[test]
+    fn sunucu_hatalari_eslenir() {
+        for (status, expected) in [(429, TranslationError::RateLimited), (500, TranslationError::Http(500)), (503, TranslationError::Http(503)), (403, TranslationError::Unauthorized)] {
+            let (endpoint, _requests) = fake_deepl(status, "{}");
+            let client = DeepLClient::with_endpoint("anahtar", endpoint);
+            assert_eq!(client.translate(&["Hello".into()]), Err(expected));
+        }
+    }
+
+    #[test]
+    fn bos_yanit_gecersizdir() {
+        let (endpoint, _requests) = fake_deepl(200, "");
+        let client = DeepLClient::with_endpoint("anahtar", endpoint);
+        assert_eq!(client.translate(&["Hello".into()]), Err(TranslationError::InvalidResponse));
     }
 
     #[test]

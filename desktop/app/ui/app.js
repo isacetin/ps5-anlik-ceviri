@@ -17,10 +17,15 @@ function setLevel(dot, level) {
   $(dot).dataset.level = level;
 }
 
+// Hata notu bir süre sonra kendiliğinden kalkar: çeviri çoğu hatadan kendi toparlanır; kalıcı
+// sorun Teşhis panelinde görünmeye devam eder.
+let errorTimer = null;
 function showError(message) {
   const box = $("error");
   box.textContent = message;
   box.hidden = !message;
+  clearTimeout(errorTimer);
+  if (message && running) errorTimer = setTimeout(() => (box.hidden = true), 20000);
 }
 
 function setState(state, detail) {
@@ -44,6 +49,7 @@ function setState(state, detail) {
     $("window-value").textContent = "—";
     $("stats").hidden = true;
     renderShown([]);
+    resetDiagnostics();
     $("state-detail").textContent = idleDetail();
   }
 }
@@ -236,6 +242,97 @@ $("tv-uninstall").addEventListener("click", async () => {
   }
 });
 
+// Teşhis paneli: iş hattı saniyede bir "health" olayı gönderir.
+const LEVEL_TEXT = { ok: "Çalışıyor", warn: "Uyarı", bad: "Sorun var", idle: "—" };
+const recoveryLog = [];
+
+const seconds = (value) => (value == null ? "—" : value < 1 ? "az önce" : `${Math.round(value)} sn önce`);
+const ms = (value) => (value == null ? "—" : `${value} ms`);
+
+function resetDiagnostics() {
+  lastHealthAt = 0;
+  for (const stage of ["capture", "ocr", "translation", "output"]) {
+    setLevel(`diag-${stage}-dot`, "idle");
+    $(`diag-${stage}`).textContent = "—";
+  }
+  $("diag-summary").textContent = "Çalışmıyor.";
+  $("diag-badge").textContent = "—";
+  $("diag-badge").className = "badge";
+  $("diag-metrics").replaceChildren();
+}
+
+// İş hattı bir okumada beklerken (ekran okuma takıldıysa en çok 60 sn) teşhis gelmez; panel eski
+// hâlinde donmasın diye bu da gösterilir.
+let lastHealthAt = 0;
+setInterval(() => {
+  if (!running || !lastHealthAt) return;
+  const silent = (Date.now() - lastHealthAt) / 1000;
+  if (silent < 4) return;
+  $("diag-summary").textContent = `Ekran okuma ${Math.round(silent)} sn'dir yanıt vermiyor; bekleniyor (en çok 60 sn, sonra kendiliğinden yeniden denenir).`;
+  setLevel("diag-capture-dot", "bad");
+  const badge = $("diag-badge");
+  badge.textContent = "Sorun var";
+  badge.className = "badge bad";
+}, 1000);
+
+function renderDiagnostics(d) {
+  lastHealthAt = Date.now();
+  $("diag-summary").textContent = d.summary;
+  const worst = ["bad", "warn"].find((level) => [d.capture, d.ocr, d.translation, d.output].includes(level));
+  const badge = $("diag-badge");
+  badge.textContent = worst === "bad" ? "Sorun var" : worst === "warn" ? "Uyarı" : "Sağlıklı";
+  badge.className = `badge ${worst ?? "ok"}`;
+
+  setLevel("diag-capture-dot", d.capture);
+  const fps = d.framesPerS == null ? "" : ` · ${d.framesPerS.toFixed(0)} kare/sn`;
+  const frozen = d.frozenS != null && d.frozenS >= 5 ? ` · ${Math.round(d.frozenS)} sn'dir aynı kare` : "";
+  $("diag-capture").textContent = d.waitingForWindow
+    ? "Pencere bekleniyor"
+    : `${d.readsPerS.toFixed(1)} okuma/sn${fps} · ${ms(d.captureMs)}${frozen}`;
+
+  setLevel("diag-ocr-dot", d.ocr);
+  $("diag-ocr").textContent = `${ms(d.ocrMs)} · ${d.lines} satır · ${d.stable} blok · ${d.filtered} ayıklanan`;
+
+  setLevel("diag-translation-dot", d.translation);
+  $("diag-translation").textContent = d.translatingEnabled
+    ? `${d.worker} · kuyruk ${d.queue + d.inFlight} · son ${seconds(d.lastTranslationAgoS)}${d.backoffS > 0 ? ` · ${Math.ceil(d.backoffS)} sn bekleme` : ""}`
+    : "Çevirisiz test modu";
+
+  setLevel("diag-output-dot", d.output);
+  $("diag-output").textContent = `${d.shown} çeviri · son gönderim ${seconds(d.lastSendAgoS)}${d.sendErrors ? ` · ${d.sendErrors} hata` : ""}`;
+
+  const metrics = [
+    ["Son kare", d.frameAgeMs == null ? "—" : d.frameAgeMs >= 1000 ? `${Math.round(d.frameAgeMs / 1000)} sn önce` : `${d.frameAgeMs} ms önce`],
+    ["Görüntüden gösterime", ms(d.latencyMs)],
+    ["Tur süresi", ms(d.roundMs)],
+    ["Çeviri süresi", ms(d.translationMs)],
+    ["Önbellekten (tekrar çevrilmeyen)", d.cacheHits],
+    ["Çeviri hatası / zaman aşımı / 429", `${d.translationErrors} / ${d.timeouts} / ${d.rateLimited}`],
+    ["Yeniden deneme / reddedilen çeviri", `${d.retries} / ${d.rejected}`],
+    ["Okuma hatası", d.readErrors],
+    ["Akış yeniden başlatma", d.streamRestarts],
+    ["Kendiliğinden toparlanma", d.recoveries],
+    ["Bellek", d.memoryMb == null ? "—" : `${Math.round(d.memoryMb)} MB`],
+    ["Çalışma süresi", `${Math.floor(d.uptimeS / 60)} dk ${Math.floor(d.uptimeS % 60)} sn`],
+  ];
+  if (d.lastReadError) metrics.push(["Son okuma hatası", d.lastReadError]);
+  if (d.lastTranslationError) metrics.push(["Son çeviri hatası", d.lastTranslationError]);
+  $("diag-metrics").replaceChildren(
+    ...metrics.flatMap(([label, value]) => [
+      Object.assign(document.createElement("dt"), { textContent: label }),
+      Object.assign(document.createElement("dd"), { textContent: String(value) }),
+    ]),
+  );
+}
+
+function addRecovery(message) {
+  const time = new Date().toLocaleTimeString("tr-TR");
+  recoveryLog.unshift(`${time}  ${message}`);
+  recoveryLog.length = Math.min(recoveryLog.length, 30);
+  $("diag-log").replaceChildren(...recoveryLog.map((line) => Object.assign(document.createElement("li"), { textContent: line })));
+  $("diag-log-count").textContent = String(recoveryLog.length);
+}
+
 function onEvent({ payload: event }) {
   switch (event.type) {
     case "state":
@@ -263,6 +360,12 @@ function onEvent({ payload: event }) {
       break;
     case "error":
       showError(event.message);
+      break;
+    case "health":
+      renderDiagnostics(event.diagnostics);
+      break;
+    case "log":
+      addRecovery(event.message);
       break;
   }
 }

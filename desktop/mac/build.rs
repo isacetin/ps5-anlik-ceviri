@@ -8,6 +8,12 @@ fn main() {
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("macos") {
         return;
     }
+    // Başka bir işletim sisteminden yalnızca Rust kodunu denetlemek için
+    // (`cargo check --target aarch64-apple-darwin`); bağlama yapılmaz.
+    println!("cargo:rerun-if-env-changed=CEVIRI_SWIFT_ATLA");
+    if std::env::var_os("CEVIRI_SWIFT_ATLA").is_some() {
+        return;
+    }
     let manifest = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
     let package = manifest.join("../../mac").canonicalize().expect("mac/ Swift paketi bulunamadı");
     for path in ["Package.swift", "Sources/PS5CeviriCore", "Sources/PS5CeviriMac", "Sources/CeviriBridge"] {

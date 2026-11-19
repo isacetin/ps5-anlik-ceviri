@@ -70,6 +70,23 @@ public struct RemotePlayCapture: Sendable {
     }
 }
 
+/// Görüntüyü kendi belleğine kopyalar. Akıştan gelen kare, ScreenCaptureKit'in küçük tampon
+/// havuzundaki bir IOSurface'i gösterir; kare (ya da ondan kesilen parça) tutuldukça o tampon
+/// akışa geri dönmez. Tamponlar tükenirse akış yeni kare yazamaz ve görüntü donar.
+func copyImage(_ image: CGImage) -> CGImage? {
+    guard let context = CGContext(
+        data: nil,
+        width: image.width,
+        height: image.height,
+        bitsPerComponent: 8,
+        bytesPerRow: 0,
+        space: CGColorSpaceCreateDeviceRGB(),
+        bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue
+    ) else { return nil }
+    context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+    return context.makeImage()
+}
+
 /// Görüntüyü küçültülmüş gri tonlamaya çevirip parlaklık istatistiği çıkarır.
 public func frameStats(of image: CGImage) -> FrameStats {
     let width = 192

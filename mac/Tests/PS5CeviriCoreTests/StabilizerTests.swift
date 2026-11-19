@@ -93,5 +93,7 @@ struct StabilizerTests {
     @Test func normalizasyonNoktalamaVeBuyukHarfiYokSayar() {
         #expect(Stabilizer.sameText("KAPI KİLİTLİ!", "kapı  kilitli"))
         #expect(!Stabilizer.sameText("Hello", "Hello there"))
+        #expect(!Stabilizer.sameText("Collect the herbs 2/5", "Collect the herbs 3/5"))
+        #expect(Stabilizer.sameText("The gate is locked.", "The gate is 1ocked."))
     }
 }

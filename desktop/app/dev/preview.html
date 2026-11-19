@@ -49,6 +49,22 @@
     </section>
 
     <section class="card">
+      <details id="diag-panel">
+        <summary><h2>Teşhis</h2><span id="diag-badge" class="badge">—</span></summary>
+        <p id="diag-summary" class="diag-summary">Çalışmıyor.</p>
+        <ul class="rows diag-stages">
+          <li><span class="dot" id="diag-capture-dot" data-level="idle"></span><span class="label">Yakalama</span><span class="value" id="diag-capture">—</span></li>
+          <li><span class="dot" id="diag-ocr-dot" data-level="idle"></span><span class="label">Yazı tanıma</span><span class="value" id="diag-ocr">—</span></li>
+          <li><span class="dot" id="diag-translation-dot" data-level="idle"></span><span class="label">Çeviri</span><span class="value" id="diag-translation">—</span></li>
+          <li><span class="dot" id="diag-output-dot" data-level="idle"></span><span class="label">Gösterim</span><span class="value" id="diag-output">—</span></li>
+        </ul>
+        <dl id="diag-metrics" class="diag-metrics"></dl>
+        <div class="diag-log-head"><span>Kendiliğinden toparlanmalar</span><span id="diag-log-count">0</span></div>
+        <ol id="diag-log" class="diag-log"><li class="empty">Yok.</li></ol>
+      </details>
+    </section>
+
+    <section class="card">
       <h2>Ekranda</h2>
       <ul id="shown" class="shown">
         <li class="empty">Henüz bir şey gösterilmedi.</li>

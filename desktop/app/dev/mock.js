@@ -63,6 +63,24 @@ window.__TAURI__ = {
         if (status.settings.source !== "pcGame") emit({ type: "tv", connected: true, address: "ws://192.168.1.5:8765", error: null }, 400);
         emit({ type: "round", video: "1920x1080", captureMs: 18, ocrMs: 142, blocks: 5, sent: 4 }, 500);
         emit({ type: "shown", texts: ["Yerel Oyna", "Çevrimiçi Oyna", "Seçenekler", "Erişilebilirlik Seçenekleri"] }, 600);
+        // ?teshis: Teşhis paneli açık, örnek ölçümlerle (?teshis=donmus: donmuş görüntü).
+        const frozen = new URLSearchParams(location.search).get("teshis") === "donmus";
+        emit({
+          type: "health",
+          diagnostics: {
+            stage: frozen ? "frameFrozen" : "ok",
+            summary: frozen ? "Görüntü 14 sn'dir değişmiyor: oyun duraklatılmış ya da Remote Play donmuş olabilir." : "4 çeviri gösteriliyor.",
+            uptimeS: 2712, capture: frozen ? "warn" : "ok", waitingForWindow: false, readsPerS: 4.9, framesPerS: frozen ? 0 : 30,
+            lastReadAgoS: 0.1, frameAgeMs: frozen ? 14000 : 21, frozenS: frozen ? 14 : 0, captureMs: 18, streamRestarts: 1, readErrors: 3,
+            ocrFailing: false, lastReadError: null, ocr: "ok", ocrMs: 142, lastOcrAgoS: 0.1, lines: 7, blocks: 5, stable: 5, filtered: 1,
+            cacheHits: 1840, translation: "ok", translatingEnabled: true, queue: 0, inFlight: 0, worker: "boşta", lastTranslationAgoS: 3.2,
+            translationMs: 96, translationErrors: 2, timeouts: 1, rateLimited: 0, retries: 2, rejected: 1, backoffS: 0, lastTranslationError: null,
+            output: "ok", tvOk: true, shown: 4, lastSendAgoS: 0.1, sendErrors: 0, roundMs: 171, latencyMs: 192, recoveries: 2, memoryMb: 212,
+          },
+        }, 700);
+        emit({ type: "log", message: "Kare akışı takıldı; yeniden başlatıldı." }, 750);
+        emit({ type: "log", message: "Çeviri 21 sn'dir yanıt vermiyor; yeni çeviri işçisi açıldı." }, 760);
+        if (new URLSearchParams(location.search).has("teshis")) setTimeout(() => (document.getElementById("diag-panel").open = true), 800);
       }
       return null;
     },

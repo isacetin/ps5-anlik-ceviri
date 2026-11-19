@@ -6,8 +6,11 @@
 pub mod deepl_client;
 pub mod discovery;
 pub mod pipeline;
+pub mod sysinfo;
+pub mod translation;
 pub mod tv_client;
 
 pub use deepl_client::DeepLClient;
-pub use pipeline::{Config, Event, Pipeline, RoundStats};
+pub use pipeline::{Config, Event, Pipeline, ReaderFactory, RoundStats};
+pub use translation::TranslationService;
 pub use tv_client::TvClient;

@@ -90,6 +90,7 @@ fn run(args: &[String]) -> Result<(), String> {
         config.cache = config.cache_path.as_deref().map(storage::load_cache).unwrap_or_default();
         println!("DeepL: {}  önbellekte {} çeviri", deepl.host(), config.cache.len());
         config.backend = Some(Arc::new(move |texts: &[String]| deepl.translate(texts)));
+        config.translation.workers = 2;
     }
 
     let address = match option(args, "--tv") {
@@ -109,8 +110,11 @@ fn run(args: &[String]) -> Result<(), String> {
     println!("TV: {}  fps: {fps}  mod: {mode}  (Ctrl+C ile çık)", tv.url());
     println!("OCR modeli yükleniyor; ilk okuma ~30 sn sürebilir...");
 
-    let reader = platform::screen_reader(option(args, "--bundle").as_deref(), fps, title_bar)?;
-    let mut pipeline = Pipeline::new(reader, Some(tv), config);
+    let bundle = option(args, "--bundle");
+    let reader = platform::screen_reader(bundle.as_deref(), fps, title_bar)?;
+    // Okuma uzun süre çalışmazsa okuyucu yeniden kurulur.
+    let factory = Box::new(move || platform::screen_reader(bundle.as_deref(), fps, title_bar));
+    let mut pipeline = Pipeline::new(reader, Some(tv), config).with_reader_factory(factory);
     pipeline.run(|event| match event {
         Event::Round(stats) if verbose => println!(
             "#{} video {}x{}  yakalama {} ms  OCR {} ms  {} blok, {} sabit, {} gönderilen",
@@ -125,7 +129,16 @@ fn run(args: &[String]) -> Result<(), String> {
         Event::TvUnreachable(error) => eprintln!("{error}"),
         Event::TranslationFailed(error) => eprintln!("Çeviri hatası: {error}"),
         Event::RoundSkipped(error) => eprintln!("Tur atlandı: {error}"),
-        Event::Frame { .. } => {}
+        Event::Recovered(message) => eprintln!("Toparlanma: {message}"),
+        Event::Health(d) if verbose => println!(
+            "[teşhis] {}  okuma {:.1}/sn  kare {}  çeviri kuyruğu {}  bellek {}",
+            d.summary,
+            d.reads_per_s,
+            d.frame_age_ms.map_or("-".into(), |ms| format!("{ms} ms önce")),
+            d.queue + d.in_flight,
+            d.memory_mb.map_or("-".into(), |mb| format!("{mb:.0} MB"))
+        ),
+        Event::Health(_) | Event::Frame { .. } => {}
     });
     Ok(())
 }

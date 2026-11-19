@@ -9,9 +9,9 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use ceviri_core::geometry::clamp_region;
-use ceviri_core::{storage, OverlayBlock, Rect, ScreenReader, SharedRegion, Terms};
+use ceviri_core::{storage, Diagnostics, OverlayBlock, Rect, ScreenReader, SharedRegion, Terms};
 use ceviri_engine::pipeline::Backend;
-use ceviri_engine::{discovery, tv_client, Config, Event, Pipeline, TvClient};
+use ceviri_engine::{discovery, translation, tv_client, Config, Event, Pipeline, TvClient};
 use serde::{Deserialize, Serialize};
 
 /// Çevirilerin nerede gösterileceği.
@@ -175,6 +175,10 @@ pub enum UiEvent {
     Shown { texts: Vec<String> },
     Round { video: String, capture_ms: u64, ocr_ms: u64, blocks: usize, sent: usize },
     Error { message: String },
+    /// Saniyede bir: yakalama, OCR, çeviri ve çıkışın durumu (teşhis paneli).
+    Health { diagnostics: Box<Diagnostics> },
+    /// Kendiliğinden toparlanma kaydı (teşhis panelindeki günlük).
+    Log { message: String },
     /// Ekran overlay'ine: gösterilecek bloklar ve video alanının ekrandaki yeri (yoksa gizle).
     Frame { blocks: Vec<OverlayBlock>, screen: Option<ScreenRect> },
 }
@@ -301,14 +305,20 @@ impl Controller {
             stop
         };
         let inner = self.inner.clone();
-        std::thread::spawn(move || {
-            let result = inner.run(stop.clone());
-            *inner.running.lock().unwrap() = None;
-            if let Err(message) = result {
-                (inner.emit)(UiEvent::Error { message });
-            }
-            (inner.emit)(UiEvent::State { state: "stopped".into(), detail: "Durduruldu".into() });
-        });
+        std::thread::Builder::new()
+            .name("ceviri-is-hatti".into())
+            .spawn(move || {
+                // İş hattında beklenmeyen bir hata olursa arayüz "Çalışıyor"da takılı kalmasın:
+                // durum sıfırlanır, hata gösterilir, yeniden başlatılabilir.
+                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| inner.run(stop.clone())))
+                    .unwrap_or_else(|panic| Err(format!("Çeviri beklenmedik şekilde durdu ({}). Yeniden başlatabilirsiniz.", translation::panic_message(&panic))));
+                *inner.running.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+                if let Err(message) = result {
+                    (inner.emit)(UiEvent::Error { message });
+                }
+                (inner.emit)(UiEvent::State { state: "stopped".into(), detail: "Durduruldu".into() });
+            })
+            .map_err(|e| e.to_string())?;
         Ok(())
     }
 
@@ -347,6 +357,8 @@ impl Inner {
         }
 
         let mut config = Config { fps: settings.fps, terms: Terms::new(&settings.protected_terms), focus: settings.focus, below: settings.subtitle_below, ..Config::default() };
+        // Yerel model işlemciyi kullanır, tek işçi yeter; DeepL ağ beklediği için iki istek aynı anda gidebilir.
+        config.translation.workers = if settings.engine == Engine::Deepl { 2 } else { 1 };
         if settings.translate {
             if settings.engine == Engine::Local {
                 state("starting", "Çeviri modeli yükleniyor…");
@@ -371,7 +383,13 @@ impl Inner {
         let emit = self.emit.clone();
         let tv_url = address.as_ref().map(|a| format!("ws://{a}")).unwrap_or_default();
         let screen_output = output.screen();
-        let mut pipeline = Pipeline::new(reader, address.map(TvClient::new), config).with_stop(stop);
+        // Okuma uzun süre çalışmazsa (takılan yakalama akışı) okuyucu aynı ayarlarla yeniden kurulur.
+        let factory_settings = settings.clone();
+        let factory_region = self.region.clone();
+        let make_reader = self.make_reader.clone();
+        let factory = Box::new(move || make_reader(&factory_settings, &factory_region));
+        let mut pipeline = Pipeline::new(reader, address.map(TvClient::new), config).with_stop(stop).with_reader_factory(factory);
+        let debug = std::env::var_os("CEVIRI_DEBUG").is_some();
         pipeline.run(move |event| {
             let ui = match event {
                 Event::Frame { blocks, screen } if screen_output => UiEvent::Frame {
@@ -393,6 +411,18 @@ impl Inner {
                 Event::TvUnreachable(error) => UiEvent::Tv { connected: false, address: tv_url.clone(), error: Some(error) },
                 Event::TranslationFailed(error) => UiEvent::Error { message: format!("Çeviri hatası ({}): {error}", settings.engine.label()) },
                 Event::RoundSkipped(message) => UiEvent::Error { message },
+                Event::Health(diagnostics) => {
+                    if debug {
+                        eprintln!("[teşhis] {:?}: {}", diagnostics.stage, diagnostics.summary);
+                    }
+                    UiEvent::Health { diagnostics }
+                }
+                Event::Recovered(message) => {
+                    if debug {
+                        eprintln!("[toparlanma] {message}");
+                    }
+                    UiEvent::Log { message }
+                }
             };
             emit(ui);
         });
@@ -416,7 +446,7 @@ mod tests {
     impl ScreenReader for FakeReader {
         fn read(&mut self) -> Result<Reading, ReadError> {
             let line = TextLine { text: "The door is locked.".into(), bbox: Rect::new(0.1, 0.5, 0.1, 0.03), confidence: 0.9 };
-            Ok(Reading { lines: vec![line], video_width: 1920, video_height: 1080, fullscreen: true, capture_ms: 1, ocr_ms: 1, screen: None })
+            Ok(Reading { lines: vec![line], video_width: 1920, video_height: 1080, fullscreen: true, capture_ms: 1, ocr_ms: 1, screen: None, frame: Default::default() })
         }
     }
 
@@ -604,6 +634,51 @@ mod tests {
 
         assert!(seen.iter().any(|e| matches!(e, UiEvent::Error { message } if message.starts_with("Oyun penceresi seçilmemiş"))));
         assert!(controller.set_region(None).is_err());
+    }
+
+    #[test]
+    fn is_hatti_cokse_de_arayuz_takilmaz_ve_yeniden_baslatilir() {
+        let (sender, events) = mpsc::channel();
+        let sender = Mutex::new(sender);
+        let emit: EventSink = Arc::new(move |event| {
+            let _ = sender.lock().unwrap().send(event);
+        });
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counter = calls.clone();
+        // İlk kurulumda okuyucu çöker (ör. platform katmanında beklenmeyen bir hata).
+        let make_reader: ReaderFactory = Arc::new(move |_, _| {
+            if counter.fetch_add(1, Ordering::SeqCst) == 0 {
+                panic!("okuyucu çöktü");
+            }
+            Ok(Box::new(FakeReader))
+        });
+        let settings = Settings { output: Output::Screen, translate: false, fps: 20.0, ..Settings::default() };
+        let controller = Controller::new(settings, emit, make_reader, no_backend(), Caches::default());
+
+        controller.start().unwrap();
+        let seen = wait_for(&events, |e| matches!(e, UiEvent::State { state, .. } if state == "stopped"));
+        assert!(seen.iter().any(|e| matches!(e, UiEvent::Error { message } if message.contains("okuyucu çöktü"))), "{seen:?}");
+        assert!(!controller.status().running, "çöküşten sonra 'çalışıyor' kalmamalı");
+
+        controller.start().unwrap();
+        wait_for(&events, |e| matches!(e, UiEvent::Frame { blocks, .. } if !blocks.is_empty()));
+        controller.stop();
+    }
+
+    #[test]
+    fn teshis_olaylari_arayuze_gider() {
+        let settings = Settings { output: Output::Screen, translate: false, fps: 20.0, ..Settings::default() };
+        let (controller, events) = controller(settings, no_backend());
+
+        controller.start().unwrap();
+        let seen = wait_for(&events, |e| matches!(e, UiEvent::Health { .. }));
+        controller.stop();
+
+        let Some(UiEvent::Health { diagnostics }) = seen.last() else { unreachable!() };
+        let json = serde_json::to_value(UiEvent::Health { diagnostics: diagnostics.clone() }).unwrap();
+        assert_eq!(json["type"], "health");
+        assert!(json["diagnostics"]["summary"].as_str().is_some_and(|s| !s.is_empty()), "{json}");
+        assert_eq!(json["diagnostics"]["translation"], "idle", "çevirisiz modda çeviri boşta");
     }
 
     #[test]

@@ -133,6 +133,8 @@ devam eder (yalnızca güncellemek için yeniden açmanız gerekir).
 
 | Sorun | Çözüm |
 |---|---|
+| Çeviri durdu ya da gelmiyor | Uygulamadaki **Teşhis** bölümünü açın: sorunun yakalamada mı, yazı tanımada mı, çeviride mi, TV'de mi olduğunu ve uygulamanın kendiliğinden toparlanıp toparlanmadığını gösterir. |
+| Teşhis "görüntü değişmiyor" diyor | Remote Play görüntüsü donmuş olabilir: Remote Play penceresine bakın, gerekirse PS5'e yeniden bağlanın. Remote Play penceresini simge durumuna küçültmeyin. |
 | Sihirbaz TV'yi bulamıyor | TV'de "Ağ üzerinden hata ayıklama" açık mı? TV ve bilgisayar aynı modemde mi? TV'nin adresini (Ayarlar → Ağ ve İnternet) elle girin. |
 | Oynamaya başlayınca Remote Play kopuyor | Kontrolcü PS5'e bağlı. Bilgisayara bağlayın (kablo ya da Bluetooth). |
 | Yazılar yanlış okunuyor | Remote Play penceresini büyütün ya da tam ekran yapın. |

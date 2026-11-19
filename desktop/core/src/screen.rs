@@ -23,6 +23,20 @@ pub struct Reading {
     /// Video alanının ekrandaki yeri: Mac'te nokta (mantıksal birim), Windows'ta fiziksel piksel;
     /// origin ana ekranın sol üstü. Ekran overlay'i buraya oturur.
     pub screen: Option<Rect>,
+    /// Okunan karenin tazeliği (platform biliyorsa).
+    pub frame: FrameInfo,
+}
+
+/// Yakalanan karenin tazeliği. Yakalamanın "çalışıyor" görünmesi yetmez: görüntünün gerçekten
+/// yenilendiği buradan anlaşılır (donmuş Remote Play, takılan akış).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct FrameInfo {
+    /// Akıştan gelen tam karelerin sıra numarası; değişmiyorsa görüntü yenilenmiyor.
+    pub seq: Option<u64>,
+    /// Okunan karenin yaşı (ms): akış karesinin geldiği andan okunduğu ana kadar.
+    pub age_ms: Option<u64>,
+    /// Akışın takıldığı için kaç kez yeniden başlatıldığı.
+    pub restarts: u64,
 }
 
 /// Okunacak bölge (okunan alana göre 0...1); `None` ise tüm alan. Okuyucu her turda bakar, böylece
@@ -35,6 +49,10 @@ pub enum ReadError {
     WindowNotFound(String),
     /// Akış yeni açıldı, henüz kare gelmedi; bir sonraki turda geçer.
     NoFrameYet,
+    /// Önceki okuma hâlâ sürüyor (takılmış olabilir); bu tur atlanır.
+    Busy,
+    /// Kare alındı ama yazı tanıma başarısız oldu ya da süre sınırını aştı.
+    Ocr(String),
     Other(String),
 }
 
@@ -42,7 +60,9 @@ impl fmt::Display for ReadError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             ReadError::WindowNotFound(message) | ReadError::Other(message) => f.write_str(message),
+            ReadError::Ocr(message) => write!(f, "yazı tanıma: {message}"),
             ReadError::NoFrameYet => f.write_str("akıştan henüz kare gelmedi"),
+            ReadError::Busy => f.write_str("önceki okuma hâlâ sürüyor"),
         }
     }
 }

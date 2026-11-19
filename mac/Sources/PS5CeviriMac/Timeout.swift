@@ -12,12 +12,14 @@ struct TimeoutError: Error, CustomStringConvertible {
 func withTimeout<T: Sendable>(seconds: Double, _ operation: @escaping @Sendable () async throws -> T) async throws -> T {
     try await withCheckedThrowingContinuation { continuation in
         let once = ResumeOnceThrowing(continuation)
-        Task {
-            do { once.resume(.success(try await operation())) } catch { once.resume(.failure(error)) }
-        }
-        Task {
+        let timer = Task {
             try? await Task.sleep(for: .seconds(seconds))
             once.resume(.failure(TimeoutError(seconds: seconds)))
+        }
+        Task {
+            do { once.resume(.success(try await operation())) } catch { once.resume(.failure(error)) }
+            // İş bittiyse zamanlayıcı beklemesin (saniyede birkaç çağrı; uyuyan görevler birikmesin).
+            timer.cancel()
         }
     }
 }
