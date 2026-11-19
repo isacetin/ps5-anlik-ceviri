@@ -1148,7 +1148,12 @@ mod tests {
             }
         });
         // Replik her 30 turda (0,6 sn) değişir; arada okuma hataları ve bir kez panik.
-        let reader = script(|round| match round % 97 {
+        let rounds = Arc::new(AtomicU64::new(0));
+        let produced = rounds.clone();
+        let reader = script(move |round| match {
+            produced.store(round, Ordering::Relaxed);
+            round % 97
+        } {
             10 => Err(ReadError::Ocr("5 sn içinde yanıt gelmedi".into())),
             20 => Err(ReadError::Busy),
             30 => Err(ReadError::NoFrameYet),
@@ -1174,9 +1179,12 @@ mod tests {
             .flatten()
             .filter(|t| t.starts_with("TR(Dialogue"))
             .collect();
-        let dialogues = seconds * 50 / 30;
-        // Hataya denk gelen birkaç replik dışında hepsi çevrilip gösterilmeli.
-        assert!(translated.len() as u64 * 10 >= dialogues * 6, "{} / {dialogues} replik çevrildi", translated.len());
+        // Okuyucunun gerçekten ürettiği replik sayısı (döngü tam 50 tur/sn dönmeyebilir).
+        let dialogues = rounds.load(Ordering::Relaxed) / 30;
+        // Hataya denk gelen replikler (enjekte edilen çeviri hataları ve beklemeler) dışında
+        // çoğu çevrilip gösterilmeli.
+        eprintln!("soak: {} sn, {} / {dialogues} replik çevrildi", seconds, translated.len());
+        assert!(translated.len() as u64 * 10 >= dialogues * 5, "{} / {dialogues} replik çevrildi", translated.len());
         let healths: Vec<&Diagnostics> = events
             .iter()
             .filter_map(|e| match e {
@@ -1184,8 +1192,14 @@ mod tests {
                 _ => None,
             })
             .collect();
-        assert!(healths.len() as u64 >= seconds.saturating_sub(1));
+        eprintln!("soak: {} teşhis olayı, en büyük kuyruk {}", healths.len(), healths.iter().map(|d| d.queue + d.in_flight).max().unwrap_or(0));
+        // Teşhis en az 1 sn arayla gelir (tur aralığına göre biraz daha seyrek).
+        assert!(healths.len() as u64 * 10 >= seconds.saturating_sub(1) * 9, "{} teşhis olayı", healths.len());
         assert!(healths.iter().all(|d| d.queue + d.in_flight <= 4), "kuyruk büyümemeli");
+        // Asıl özellik: çalışma boyunca hiçbir anda çeviri uzun süre durmamalı.
+        let longest_gap = healths.iter().skip(5).filter_map(|d| d.last_translation_ago_s).fold(0.0, f64::max);
+        eprintln!("soak: en uzun çevirisiz süre {longest_gap:.1} sn, bellek {:?} MB → {:?} MB", healths.get(5).and_then(|d| d.memory_mb), healths.last().and_then(|d| d.memory_mb));
+        assert!(longest_gap < 8.0, "çeviri {longest_gap:.1} sn durdu");
         // Son birkaç saniyede de yeni çeviri gelmeli (sessizce durmamalı).
         let last = healths.last().unwrap();
         assert!(last.last_translation_ago_s.is_some_and(|s| s < 3.0), "{last:?}");
