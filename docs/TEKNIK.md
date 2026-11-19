@@ -340,6 +340,9 @@ modu Android TV gerektirmez: Samsung/LG televizyonlarla ya da oyunu bilgisayarda
 ./gradlew assembleRelease && cd desktop/app && CI=true cargo tauri build --bundles app,dmg
 ```
 
+Mac'te güncel kodu çekip derleyen, Uygulamalar'a kuran ve Ekran Kaydı iznini sıfırlayan tek komut:
+`./tools/mac-guncelle.sh` (imzasız paket her derlemede yeni uygulama sayıldığı için izin yeniden verilir).
+
 (`cargo install tauri-cli --version "^2" --locked` gerekir; `CI=true`, DMG penceresini Finder'a
 AppleScript ile düzenletmeyi atlar.) Paketler henüz imzasızdır: Mac'te Gatekeeper, Windows'ta
 SmartScreen uyarı verir. Mac paketi yerel (ad-hoc) imzayla uygulama kimliğini taşır.
