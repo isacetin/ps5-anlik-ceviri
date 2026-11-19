@@ -1150,19 +1150,19 @@ mod tests {
         // Replik her 30 turda (0,6 sn) değişir; arada okuma hataları ve bir kez panik.
         let rounds = Arc::new(AtomicU64::new(0));
         let produced = rounds.clone();
-        let reader = script(move |round| match {
+        let reader = script(move |round| {
             produced.store(round, Ordering::Relaxed);
-            round % 97
-        } {
-            10 => Err(ReadError::Ocr("5 sn içinde yanıt gelmedi".into())),
-            20 => Err(ReadError::Busy),
-            30 => Err(ReadError::NoFrameYet),
-            40 => Err(ReadError::Other("akış durdu".into())),
-            50 if round < 100 => panic!("beklenmeyen"),
-            _ => {
-                let dialogue = round / 30;
-                let frame = FrameInfo { seq: Some(round), age_ms: Some(16), restarts: 0 };
-                Ok(Reading { frame, ..reading(vec![sentence(&format!("Dialogue {dialogue}: keep moving forward."), 0.8), line("Inventory", 0.1)]) })
+            match round % 97 {
+                10 => Err(ReadError::Ocr("5 sn içinde yanıt gelmedi".into())),
+                20 => Err(ReadError::Busy),
+                30 => Err(ReadError::NoFrameYet),
+                40 => Err(ReadError::Other("akış durdu".into())),
+                50 if round < 100 => panic!("beklenmeyen"),
+                _ => {
+                    let dialogue = round / 30;
+                    let frame = FrameInfo { seq: Some(round), age_ms: Some(16), restarts: 0 };
+                    Ok(Reading { frame, ..reading(vec![sentence(&format!("Dialogue {dialogue}: keep moving forward."), 0.8), line("Inventory", 0.1)]) })
+                }
             }
         });
         let config = Config { backend: Some(backend), fps: 50.0, translation: translation::Options { stuck_after: 2.0, ..Default::default() }, ..Config::default() };
