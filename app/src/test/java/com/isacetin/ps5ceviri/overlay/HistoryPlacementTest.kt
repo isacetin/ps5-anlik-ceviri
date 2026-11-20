@@ -69,6 +69,18 @@ class HistoryPlacementTest {
     }
 
     @Test
+    fun `ceviri orijinalin altindaysa yigin orijinalin ustunden baslar`() {
+        val a = anchor(1920, 1080)
+        val original = a.top - 70f
+        val placed = placeHistory(a, listOf(400f to 50f), 6f, historyTopLimit(original, 1080), emptyList(), 1920, above = original)
+
+        assertTrue(placed.single().top + placed.single().height <= original - 6f + 0.01f)
+        // Orijinal çevirinin altındaysa (alta yer yoktu) başlangıç çevirinin üstüdür.
+        val under = placeHistory(a, listOf(400f to 50f), 6f, historyTopLimit(a.top, 1080), emptyList(), 1920, above = a.top + 100f)
+        assertEquals(a.top - 6f, under.single().top + under.single().height, 0.01f)
+    }
+
+    @Test
     fun `ekran kenarindaki capada kutu ekrandan tasmaz`() {
         val edge = PixelRect(0f, 900f, 200f, 60f)
         val placed = placeHistory(edge, listOf(400f to 50f), 6f, historyTopLimit(edge.top, 1080), emptyList(), 1920)

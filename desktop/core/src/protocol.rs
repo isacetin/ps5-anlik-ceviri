@@ -15,6 +15,10 @@ pub struct OverlayBlock {
     pub kind: Option<String>,
     #[serde(rename = "lineH")]
     pub line_h: f64,
+    /// Çeviri orijinal yazının altına/üstüne konduysa orijinal yazının üst kenarı (0...1). TV önceki
+    /// altyazı satırlarını bunun da üstünden başlatır, orijinal altyazı kapanmaz. Yoksa gönderilmez.
+    #[serde(rename = "srcY", default, skip_serializing_if = "Option::is_none")]
+    pub src_y: Option<f64>,
     pub text: String,
     pub w: f64,
     pub x: f64,
@@ -55,7 +59,7 @@ mod tests {
     fn tv_protokolu_ile_ayni_json_uretilir() {
         let message = OverlayMessage::new(
             123,
-            vec![OverlayBlock { id: "abc123".into(), x: 0.12, y: 0.81, w: 0.6, h: 0.08, line_h: 0.03, text: "KAPI KİLİTLİ".into(), kind: None }],
+            vec![OverlayBlock { id: "abc123".into(), x: 0.12, y: 0.81, w: 0.6, h: 0.08, line_h: 0.03, text: "KAPI KİLİTLİ".into(), kind: None, src_y: None }],
         );
 
         assert_eq!(
@@ -66,13 +70,19 @@ mod tests {
 
     #[test]
     fn altyazi_turu_yalnizca_varsa_gonderilir_ve_eski_mesaj_okunur() {
-        let block = OverlayBlock { id: "s".into(), x: 0.3, y: 0.8, w: 0.4, h: 0.05, line_h: 0.04, text: "Gidelim.".into(), kind: Some(OverlayBlock::SUBTITLE.into()) };
+        let block = OverlayBlock { id: "s".into(), x: 0.3, y: 0.8, w: 0.4, h: 0.05, line_h: 0.04, text: "Gidelim.".into(), kind: Some(OverlayBlock::SUBTITLE.into()), src_y: None };
         assert_eq!(
-            OverlayMessage::new(2, vec![block]).to_json(),
+            OverlayMessage::new(2, vec![block.clone()]).to_json(),
             r#"{"blocks":[{"h":0.05,"id":"s","kind":"subtitle","lineH":0.04,"text":"Gidelim.","w":0.4,"x":0.3,"y":0.8}],"seq":2,"v":1}"#
+        );
+        let below = OverlayBlock { src_y: Some(0.72), ..block };
+        assert_eq!(
+            OverlayMessage::new(3, vec![below]).to_json(),
+            r#"{"blocks":[{"h":0.05,"id":"s","kind":"subtitle","lineH":0.04,"srcY":0.72,"text":"Gidelim.","w":0.4,"x":0.3,"y":0.8}],"seq":3,"v":1}"#
         );
         let old: OverlayMessage = serde_json::from_str(r#"{"blocks":[{"h":0.08,"id":"a","lineH":0.03,"text":"X","w":0.6,"x":0.1,"y":0.8}],"seq":1,"v":1}"#).unwrap();
         assert_eq!(old.blocks[0].kind, None);
+        assert_eq!(old.blocks[0].src_y, None);
     }
 
     #[test]

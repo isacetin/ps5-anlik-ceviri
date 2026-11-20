@@ -921,10 +921,7 @@ fn compose(config: &Config, scene: &mut SceneView<'_>, service: Option<&Translat
         };
         if !text.trim().is_empty() {
             let mut shown = overlay_block(block, &text, config.below && scene.below.contains(&block.id));
-            // Çeviri yazının altına konduysa (`below`) altyazı yığını kurulmaz: TV önceki satırları
-            // çeviri kutusunun üstüne dizer, orası orijinal İngilizce altyazının yeridir.
-            let placed_below = config.below && scene.below.contains(&block.id);
-            if !placed_below && scene.categories.get(&block.id) == Some(&Category::Subtitle) {
+            if scene.categories.get(&block.id) == Some(&Category::Subtitle) {
                 shown.kind = Some(OverlayBlock::SUBTITLE.to_string());
             }
             blocks.push(shown);
@@ -944,9 +941,12 @@ fn display_text(key: &str, translated: &str, speaker: Option<&str>) -> String {
     }
 }
 
+/// `below`: çeviri orijinal yazının altına (yer yoksa üstüne) konur; orijinalin üst kenarı `src_y`
+/// ile gider (TV önceki altyazıları orijinali kapatmadan dizsin).
 fn overlay_block(block: &StableBlock, text: &str, below: bool) -> OverlayBlock {
     let b = if below { focus::beside(block.bbox, block.line_height) } else { block.bbox };
-    OverlayBlock { id: block.id.clone(), x: b.x, y: b.y, w: b.width, h: b.height, line_h: block.line_height, text: text.to_string(), kind: None }
+    let src_y = below.then_some(block.bbox.y);
+    OverlayBlock { id: block.id.clone(), x: b.x, y: b.y, w: b.width, h: b.height, line_h: block.line_height, text: text.to_string(), kind: None, src_y }
 }
 #[cfg(test)]
 mod tests {
@@ -1368,7 +1368,7 @@ mod tests {
     }
 
     #[test]
-    fn alta_yazilan_altyazi_yigin_icin_isaretlenmez() {
+    fn alta_yazilan_altyazi_orijinalin_yeriyle_gider() {
         let (address, messages) = fake_tv(usize::MAX);
         let config = Config { backend: Some(echo()), below: true, ..fast() };
         let reader = FakeReader { lines: vec![sentence("You shouldn't be here.", 0.7)], missing: 0, calls: 0 };
@@ -1376,7 +1376,10 @@ mod tests {
         let (received, _) = run_until(reader, config, &messages, address, |m| !m.blocks.is_empty());
 
         let block = &received.iter().find(|m| !m.blocks.is_empty()).unwrap().blocks[0];
-        assert_eq!(block.kind, None);
+        // Yığın kurulur ama TV önceki satırları orijinal yazının (0.7) üstünden başlatır.
+        assert_eq!(block.kind.as_deref(), Some(OverlayBlock::SUBTITLE));
+        assert_eq!(block.src_y, Some(0.7));
+        assert!(block.y > 0.7);
     }
 
     #[test]

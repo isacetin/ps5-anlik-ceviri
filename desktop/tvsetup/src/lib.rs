@@ -244,10 +244,19 @@ impl Installer {
 
     /// Klasik `adb install` gibi: APK'yı TV'nin geçici klasörüne kopyalar, `pm install -r` ile kurar.
     /// (Akışlı `cmd package install` bazı TV'lerde son durumu düzgün döndürmüyor.)
+    ///
+    /// TV'deki eski sürüm başka bir anahtarla imzalandıysa (sürüm paketleri her derlemede yeni bir
+    /// anahtarla imzalanıyor) Android güncellemeyi reddeder; eski uygulama kaldırılıp yenisi kurulur.
+    /// TV uygulamasında korunacak kullanıcı verisi yoktur (izin `prepare`'de yeniden verilir).
     fn install(&self, device: &mut ADBTcpDevice, apk: &[u8]) -> Result<(), SetupError> {
         let remote = "/data/local/tmp/anlik-ceviri-tv.apk";
         device.push(&mut io::Cursor::new(apk), &remote).map_err(|e| SetupError::InstallFailed(format!("APK TV'ye kopyalanamadı: {e}")))?;
-        let output = self.shell(device, &format!("pm install -r {remote}; rm -f {remote}"))?;
+        let mut output = self.shell(device, &format!("pm install -r {remote}"))?;
+        if signature_mismatch(&output) {
+            self.shell(device, &format!("pm uninstall {PACKAGE}"))?;
+            output = self.shell(device, &format!("pm install {remote}"))?;
+        }
+        let _ = self.shell(device, &format!("rm -f {remote}"));
         if output.contains("Success") {
             Ok(())
         } else {
@@ -267,6 +276,11 @@ impl Installer {
     }
 }
 
+/// `pm install` çıktısı: kurulu uygulama başka bir anahtarla imzalandığı için güncelleme reddedildi.
+fn signature_mismatch(output: &str) -> bool {
+    output.contains("INSTALL_FAILED_UPDATE_INCOMPATIBLE") || output.contains("signatures do not match")
+}
+
 #[cfg(test)]
 mod tests {
     use std::net::TcpListener;
@@ -277,6 +291,16 @@ mod tests {
     fn surum_kodu_dumpsys_ciktisindan_okunur() {
         assert_eq!(parse_version_code("    versionCode=2 minSdk=26 targetSdk=36\n"), Some(2));
         assert_eq!(parse_version_code("versionCode=140 minSdk=26"), Some(140));
+    }
+
+    #[test]
+    fn imza_uyusmazligi_taninir() {
+        assert!(signature_mismatch(
+            "Failure [INSTALL_FAILED_UPDATE_INCOMPATIBLE: Package com.isacetin.ps5ceviri signatures do not match previously installed version; ignoring!]"
+        ));
+        assert!(!signature_mismatch("Success"));
+        assert!(!signature_mismatch("Failure [INSTALL_FAILED_INSUFFICIENT_STORAGE]"));
+        assert!(!signature_mismatch("Failure [INSTALL_FAILED_VERSION_DOWNGRADE]"));
         assert_eq!(parse_version_code(""), None);
     }
 

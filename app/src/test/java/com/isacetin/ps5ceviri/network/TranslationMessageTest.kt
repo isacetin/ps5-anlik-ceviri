@@ -60,8 +60,13 @@ class TranslationMessageTest {
         )
 
         assertEquals("subtitle", message?.blocks?.single()?.kind)
+        val below = parseTranslationMessage(
+            """{"v":1,"seq":3,"blocks":[{"h":0.05,"id":"s","kind":"subtitle","lineH":0.04,"srcY":0.72,"text":"Gidelim.","w":0.4,"x":0.3,"y":0.8}]}""",
+        )
+        assertEquals(0.72f, below?.blocks?.single()?.srcY)
         val old = parseTranslationMessage("""{"v":1,"seq":1,"blocks":[{"id":"a","x":0,"y":0,"w":1,"h":1,"text":"X"}]}""")
         assertEquals(null, old?.blocks?.single()?.kind)
+        assertEquals(null, old?.blocks?.single()?.srcY)
     }
 
     @Test

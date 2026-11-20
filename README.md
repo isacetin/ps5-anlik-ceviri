@@ -1,7 +1,7 @@
 # Anlık Çeviri
 
-PS5'te oynadığınız oyunlardaki İngilizce yazıları **anında Türkçeye çevirir** ve çeviriyi orijinal
-yazının **tam üstünde** gösterir: TV'de ya da bilgisayar ekranında.
+PS5 oyunlarındaki İngilizce yazıları **anında Türkçeye çevirir** ve çeviriyi TV'de, yazının hemen
+yanında gösterir. Oyunu her zamanki gibi TV'de oynarsınız.
 
 ```
  PS5 ──── HDMI ────▶ TV  ◀──── Türkçe çeviri ────┐
@@ -10,15 +10,8 @@ yazının **tam üstünde** gösterir: TV'de ya da bilgisayar ekranında.
                          yazıları okur ve çevirir
 ```
 
-Oyunu her zamanki gibi TV'den, gecikmesiz izlersiniz. Bilgisayar aynı görüntüyü PS Remote Play
-üzerinden okur, yazıları bulup çevirir ve TV'ye (ya da kendi ekranına) gönderir.
-
-**Windows'ta PC oyunları da çevrilir:** Steam, Epic vb. ile bilgisayarda oynadığınız oyunlarda PS5
-gerekmez; yazılar doğrudan oyun penceresinden okunur ve çeviri oyunun üstünde gösterilir
-([ayrıntılar](#pc-oyunları-windows)).
-
-> Geliştirme aşamasında. Mac + Vestel Android TV + PS5 ile denendi; Windows sürümü henüz gerçek bir
-> bilgisayarda denenmedi.
+Bilgisayar, PS5 görüntüsünü PS Remote Play ile izler, yazıları okur, çevirir ve TV'ye gönderir.
+Windows'ta bilgisayarda oynadığınız oyunlar da çevrilir ([PC oyunları](#pc-oyunları-windows)).
 
 <table>
   <tr>
@@ -29,145 +22,90 @@ gerekmez; yazılar doğrudan oyun penceresinden okunur ve çeviri oyunun üstün
   </tr>
 </table>
 
+## Neler yapar?
+
+- Altyazıları, görevleri ve menüleri çevirir; logo ve tabelalara dokunmaz.
+- Konuşan adlarını korur: "ARTHUR: We need to go." → "ARTHUR: Gitmemiz gerekiyor."
+- Hızlı konuşmada önceki satır TV'de bir süre küçük ve soluk kalır; okumadan kaybolmaz.
+- Oyun profiliyle karakter adlarını ve oyuna özel terimleri doğru kullanır.
+- İnternetsiz çalışır (yerel model) ya da isterseniz DeepL kullanır.
+
 ## Neler gerekiyor?
 
-- **PS5** ve ücretsiz **PS Remote Play** uygulaması (PC oyunlarında gerekmez)
-- **Mac** (macOS 15 ya da üstü, Apple Silicon) veya **Windows 10/11** bilgisayar
-- Çeviriyi TV'de görmek için **Android TV / Google TV** (ör. Vestel, TCL, Philips, Sony).
-  Samsung ve LG TV'lerde çeviri bilgisayar ekranında gösterilir.
-- Çeviri için hiçbir hesap gerekmez: **yerel model** bilgisayarda çalışır (bir kez ~241 MB iner).
-  İsterseniz daha yüksek kalite için ücretsiz **DeepL API Free** hesabı (ayda 500.000 karakter)
-  kullanabilirsiniz.
-- TV, bilgisayar ve PS5 **aynı ev ağında**
+- **PS5** ve ücretsiz **PS Remote Play** uygulaması
+- **Mac** (Apple Silicon, macOS 15+) ya da **Windows 10/11** bilgisayar
+- **Android TV / Google TV** (Vestel, TCL, Philips, Sony…). Samsung ve LG'de çeviri bilgisayar
+  ekranında görünür.
+- Hepsi **aynı ev ağında**
 
-## İndirme
+Hesap gerekmez: çeviri bilgisayardaki yerel modelle yapılır (bir kez ~241 MB iner).
 
-Son sürümü **[Releases](https://github.com/isacetin/ps5-anlik-ceviri/releases/latest)** sayfasından
-indirin:
+## İndirme ve kurulum
 
-| Sistem | Dosya | Boyut |
-|---|---|---|
-| Mac (Apple Silicon) | `AnlikCeviri_0.4.1_mac_aarch64.dmg` | ~14 MB |
-| Windows (64 bit) | `AnlikCeviri_0.4.1_windows_x64-setup.exe` | ~17 MB |
+1. **[Son sürümü indirin](https://github.com/isacetin/ps5-anlik-ceviri/releases/latest)**:
+   Mac için `.dmg`, Windows için `.exe`.
+2. **Mac:** Anlık Çeviri'yi Uygulamalar klasörüne sürükleyin. "Doğrulanamadı" uyarısı çıkarsa
+   Sistem Ayarları → Gizlilik ve Güvenlik → **Yine de Aç**.
+   **Windows:** Dosyayı çalıştırın. Uyarı çıkarsa **Ek bilgi → Yine de çalıştır**.
+3. Uygulamayı açın. **Kurulum sihirbazı** gerisini adım adım yaptırır; TV uygulamasını da kendisi
+   kurar. TV'de yalnızca bir ayarı açmanız gerekir: Ayarlar → Geliştirici seçenekleri →
+   **Ağ üzerinden hata ayıklama**.
 
-TV uygulaması dosyalara gömülüdür; ayrıca indirmeniz gerekmez.
+> Uyarılar, uygulama henüz Apple ve Microsoft tarafından imzalanmadığı için çıkar.
 
-## Kurulum
-
-**Mac:** `.dmg` dosyasını açın ve **Anlık Çeviri**'yi Uygulamalar klasörüne sürükleyin. İlk açılışta
-"doğrulanamadı" uyarısı çıkarsa **Sistem Ayarları → Gizlilik ve Güvenlik** altındaki
-**Yine de Aç** düğmesine basın.
-
-**Windows:** `.exe` dosyasını çalıştırın. "Windows bilgisayarınızı korudu" uyarısı çıkarsa
-**Ek bilgi → Yine de çalıştır** deyin. Kurulum Türkçedir.
-
-> Bu uyarılar, uygulama henüz Apple ve Microsoft tarafından imzalanmadığı için çıkar.
-
-Uygulama ilk açıldığında **kurulum sihirbazı** her şeyi adım adım yaptırır:
-
-1. Çevirileri nerede görmek istediğinizi seçersiniz (TV, bilgisayar ekranı ya da ikisi).
-2. Mac'te ekranı okuma iznini verirsiniz.
-3. PS Remote Play'i açıp PS5'e bağlanırsınız.
-4. **TV uygulamasını sihirbaz kurar.** Siz yalnızca TV'de bir ayarı açarsınız (Ayarlar → Geliştirici
-   seçenekleri → **Ağ üzerinden hata ayıklama**) ve TV'nin sorduğu izni onaylarsınız. Kurulum,
-   TV'de bir test yazısıyla biter.
-5. Kontrolcüyü (DualSense) bilgisayara bağlarsınız.
-6. Çeviriyi kimin yapacağını seçersiniz: **yerel model** (önerilen; modeli sihirbaz indirir),
-   **DeepL** (anahtarınızı girersiniz) ya da önce çevirisiz deneme modu.
+**Güncelleme:** Yeni sürümü aynı şekilde kurun; ayarlarınız korunur. TV uygulamasını güncellemek
+için Ayarlar → **Kurulum sihirbazını aç** → **Bu TV'ye kur**.
 
 ## Kullanım
 
-1. PS5'i ve TV'yi açın; bilgisayarda PS Remote Play'i açıp PS5'e bağlanın.
-2. **Anlık Çeviri**'yi açıp **Başlat**'a basın.
-3. TV'de PS5'in HDMI girişine geçip oynayın. İlk açılışta yazıların görünmesi ~30 saniye sürer.
-
-**Ayarlar**'dan şunları değiştirebilirsiniz: çevirilerin nerede gösterileceği, çevrilmemesi gereken
-adlar (oyun, karakter, yer adları), çeviriyi yerel modelin mi DeepL'in mi yapacağı, çevirisiz test
-modu ve okuma hızı. Kurulum sihirbazı da buradan yeniden açılır.
+1. PS5'i ve TV'yi açın; bilgisayarda PS Remote Play ile PS5'e bağlanın.
+2. Anlık Çeviri'de **Başlat**'a basın.
+3. TV'de PS5'in girişine geçip oynayın. Çeviriler ilk açılışta ~30 saniye içinde gelir.
 
 ### PC oyunları (Windows)
 
-Bilgisayarda yüklü oyunlar (Steam, Epic, Xbox uygulaması vb.) PS5'ten bağımsız çevrilir:
-
-1. Oyunu açın. Oyunun grafik ayarlarında ekran modunu **Kenarlıksız pencere** (Borderless) ya da
-   **Pencere** yapın; "Tam ekran" (özel tam ekran) modunda çeviriler oyunun üstünde görünmez.
-2. Anlık Çeviri'de sihirbazın ilk adımında **"Bu bilgisayarda yüklü bir oyunda"**yı seçin (ya da
-   Ayarlar → **Ne oynuyorsunuz?**) ve listeden oyunun penceresini seçin.
-3. **Başlat**'a basıp oyuna dönün. Çeviriler İngilizce yazıların üstünde görünür.
-
-Oyun içindeyken:
+1. Oyunun ekran modunu **Kenarlıksız pencere** ya da **Pencere** yapın.
+2. Anlık Çeviri'de **"Bu bilgisayarda yüklü bir oyunda"**yı seçip oyunun penceresini seçin.
+3. **Başlat**'a basın. Çeviriler oyunun üstünde görünür.
 
 | Kısayol | Ne yapar |
 |---|---|
-| <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>T</kbd> | Çevirileri gizler / geri getirir |
-| <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>R</kbd> | Okunacak bölgeyi seçtirir: fareyle bir dikdörtgen çizin (ör. altyazı bandı). Esc vazgeçer, sağ tık tüm ekrana döner. |
-
-Bölge seçmek, arayüzü kalabalık oyunlarda yalnızca altyazının çevrilmesini sağlar ve okumayı
-hızlandırır. Bölge her oyun için ayrı saklanır; Ayarlar'dan da seçilip temizlenebilir. Kısayollar
-yalnızca çeviri çalışırken etkindir.
+| <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>T</kbd> | Çevirileri gizler / gösterir |
+| <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>R</kbd> | Yalnızca seçtiğiniz bölgeyi (ör. altyazı bandı) okur |
 
 ### Yerel model mi, DeepL mi?
 
-| | Yerel model | DeepL |
-|---|---|---|
-| Hız | Altyazı başına ~0,1 sn | İnternet hızına bağlı |
-| Kalite | Konuşmalarda DeepL'e yakın; deyimlerde ve bazı menü terimlerinde daha zayıf | En iyi |
-| Gerekenler | Bir kez ~241 MB indirme | Ücretsiz hesap, API anahtarı, internet |
-| Sınır | Yok | Ayda 500.000 karakter |
+**Yerel model** ücretsizdir, internetsiz ve hızlı çalışır; çoğu oyun için yeterlidir. **DeepL**
+biraz daha doğal çevirir ama ücretsiz hesap ve internet ister (ayda 500.000 karakter).
+Karşılaştırma: [docs/yerel-ceviri-karsilastirma.md](docs/yerel-ceviri-karsilastirma.md).
 
-Ölçüm ayrıntıları: [docs/yerel-ceviri-karsilastirma.md](docs/yerel-ceviri-karsilastirma.md). Yerel
-model, Helsinki Üniversitesi'nin [OPUS-MT](https://huggingface.co/Helsinki-NLP/opus-mt-tc-big-en-tr)
-modelidir (CC-BY 4.0).
-
-## TV uygulamasını kaldırma
-
-TV uygulaması sıradan bir uygulamadır; TV'nize zarar vermez ve istediğiniz zaman kaldırılır:
-
-- TV'de **Ayarlar → Uygulamalar → PS5 Çeviri → Kaldır**, ya da
-- Anlık Çeviri'de **Ayarlar → TV uygulamasını kaldır**.
-
-Kurulumdan sonra TV'deki "Ağ üzerinden hata ayıklama"yı kapatabilirsiniz; TV uygulaması çalışmaya
-devam eder (yalnızca güncellemek için yeniden açmanız gerekir).
-
-## Sık karşılaşılan sorunlar
+## Sorun mu var?
 
 | Sorun | Çözüm |
 |---|---|
-| Çeviri durdu ya da gelmiyor | Uygulamadaki **Teşhis** bölümünü açın: sorunun yakalamada mı, yazı tanımada mı, çeviride mi, TV'de mi olduğunu ve uygulamanın kendiliğinden toparlanıp toparlanmadığını gösterir. |
-| Teşhis "görüntü değişmiyor" diyor | Remote Play görüntüsü donmuş olabilir: Remote Play penceresine bakın, gerekirse PS5'e yeniden bağlanın. Remote Play penceresini simge durumuna küçültmeyin. |
-| Sihirbaz TV'yi bulamıyor | TV'de "Ağ üzerinden hata ayıklama" açık mı? TV ve bilgisayar aynı modemde mi? TV'nin adresini (Ayarlar → Ağ ve İnternet) elle girin. |
-| Oynamaya başlayınca Remote Play kopuyor | Kontrolcü PS5'e bağlı. Bilgisayara bağlayın (kablo ya da Bluetooth). |
+| Çeviri gelmiyor | Uygulamadaki **Teşhis** bölümü sorunun nerede olduğunu söyler. |
+| Görüntü donmuş görünüyor | Remote Play penceresini küçültmeyin; gerekirse PS5'e yeniden bağlanın. |
+| Sihirbaz TV'yi bulamıyor | TV'de "Ağ üzerinden hata ayıklama" açık mı, aynı ağda mı? Adresi elle girin. |
+| Oynarken Remote Play kopuyor | Kontrolcüyü bilgisayara bağlayın. |
 | Yazılar yanlış okunuyor | Remote Play penceresini büyütün ya da tam ekran yapın. |
-| TV'de kutular yazının üstüne tam oturmuyor | TV'nin resim formatını "Tam Piksel" ya da "Just Scan" yapın. |
-| Oyun ya da karakter adı çevriliyor | Ayarlar → **Çevrilmeyecek adlar**'a ekleyin. |
-| PC oyununda "Oyun görüntüsü alınamıyor (kare siyah)" | Uygulama önce pencereyi, siyah gelirse ekranın tamamını okumayı dener; ikisi de siyahsa oyunun ekran modunu "Kenarlıksız pencere" (Fullscreen Borderless) ya da "Pencere" yapın. |
-| PC oyunu listede yok | Oyun açık ve simge durumunda değil mi? Listedeki **Yenile**'ye basın. |
-| PC oyununda ekran yazıyla doluyor | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>R</kbd> ile yalnızca altyazı bandını seçin. |
-| "DeepL: kota doldu" | Aylık 500.000 karakter bitti; yeni ayda açılır. Bu arada Ayarlar'dan yerel modele geçebilirsiniz. |
-| "Yerel çeviri modeli indirilmemiş" | Ayarlar → **Yerel çeviri modeli** → İndir. İndirme yarıda kalırsa tekrar basın; kaldığı dosyadan devam eder. |
+| Kutular yazıya tam oturmuyor | TV'nin resim formatını "Tam Piksel" / "Just Scan" yapın. |
+| Bir ad çevriliyor | Ayarlar → **Çevrilmeyecek adlar**'a ekleyin. |
+| "DeepL: kota doldu" | Ay sonunu bekleyin ya da yerel modele geçin. |
+
+**TV uygulamasını kaldırmak için:** TV'de Ayarlar → Uygulamalar → PS5 Çeviri → Kaldır, ya da
+Anlık Çeviri'de Ayarlar → **TV uygulamasını kaldır**.
 
 ## Bilinen sınırlar
 
-- Çeviri, görüntünün yaklaşık **0,5–1,5 saniye** gerisinden gelir; çok hızlı akan altyazılarda geride
-  kalabilir.
-- Oyun logolarındaki süslü yazılar bazen yanlış okunur.
-- Mac'te Remote Play **tam ekrandayken** bilgisayar ekranı modunun çalışması henüz denenmedi.
-- Kurulum dosyaları henüz imzasızdır (yukarıdaki uyarılar).
-- PC oyunu modu yalnızca Windows'ta var ve henüz gerçek oyunlarda denenmedi. Özel tam ekran oyunlar,
-  bazı hile korumalı (anti-cheat) oyunlar ve korumalı pencereler yakalanamayabilir.
+- Çeviri görüntünün ~0,5–1,5 saniye gerisinden gelir.
+- Süslü logo yazıları bazen yanlış okunur.
+- Kurulum dosyaları henüz imzasızdır.
+- PC oyunu modu yalnızca Windows'ta var ve henüz gerçek oyunlarda denenmedi.
 
 ## Geliştiriciler
 
-Mimari, iş hattının ayrıntıları, TV protokolü, kaynak koddan derleme ve testler:
-**[docs/TEKNIK.md](docs/TEKNIK.md)**.
-
-```bash
-./gradlew assembleRelease
-```
-
-```bash
-cd desktop && cargo run --release -p ceviri-app
-```
+Mimari, TV protokolü, derleme ve testler: **[docs/TEKNIK.md](docs/TEKNIK.md)**.
+Sürüm notları: [docs/surum-notlari](docs/surum-notlari).
 
 ```bash
 cd desktop && cargo test --workspace

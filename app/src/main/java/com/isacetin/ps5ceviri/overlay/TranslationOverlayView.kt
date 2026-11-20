@@ -51,6 +51,7 @@ fun historyTopLimit(anchorTop: Float, screenHeight: Int): Float =
 
 /**
  * Önceki altyazı kutularının yeri: [anchor] (güncel altyazının kutusu) üstüne, [gap] aralıkla,
+ * [above] verilirse onun da üstüne (çevirinin üstündeki orijinal altyazı kapanmasın),
  * yatayda onun ortasına hizalı, alttan üste. [sizes] seviye sırasıyla her kutunun (genişlik,
  * yükseklik) boyutudur. Bir kutu [topLimit]'in üstüne taşıyor ya da [others]'tan (öbür çeviri
  * kutuları: HUD, menü) biriyle çakışıyorsa o ve üstündekiler yerleştirilmez. Kutular ekrandan
@@ -63,9 +64,10 @@ fun placeHistory(
     topLimit: Float,
     others: List<PixelRect>,
     screenWidth: Int,
+    above: Float = anchor.top,
 ): List<PixelRect> {
     val placed = ArrayList<PixelRect>(sizes.size)
-    var bottom = anchor.top - gap
+    var bottom = min(anchor.top, above) - gap
     for ((width, height) in sizes) {
         val w = min(width, screenWidth.toFloat())
         val left = (anchor.left + anchor.width / 2f - w / 2f).coerceIn(0f, screenWidth - w)
@@ -194,13 +196,16 @@ class TranslationOverlayView(
             used[key] = cached
             cached
         }
+        // Çeviri orijinalin altındaysa yığın orijinal altyazının üstünden başlar.
+        val above = anchorBlock.srcY?.let { it * screenHeight - padding } ?: anchor.background.top
         val placed = placeHistory(
             anchor = anchor.background.toPixelRect(),
             sizes = layouts.map { widestLine(it.layout) + 2 * padding to it.layout.height + 2 * padding },
             gap = gap,
-            topLimit = historyTopLimit(anchor.background.top, screenHeight),
+            topLimit = historyTopLimit(min(anchor.background.top, above), screenHeight),
             others = rendered.filter { it.id != anchor.id }.map { it.background.toPixelRect() },
             screenWidth = screenWidth,
+            above = above,
         )
         for ((index, rect) in placed.withIndex()) {
             val line = lines[index]

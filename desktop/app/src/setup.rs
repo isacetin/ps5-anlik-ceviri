@@ -166,6 +166,7 @@ pub async fn tv_test(ip: String) -> Result<(), String> {
             line_h: 0.06,
             text: "Anlık Çeviri hazır ✓".into(),
             kind: None,
+            src_y: None,
         };
         for _ in 0..6 {
             tv.send(std::slice::from_ref(&block))?;
