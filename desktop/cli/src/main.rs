@@ -83,14 +83,16 @@ fn run(args: &[String]) -> Result<(), String> {
         config.cache_path = storage::local_cache_path();
         config.cache = config.cache_path.as_deref().map(|path| storage::load_local_cache(path, storage::cache_path().as_deref())).unwrap_or_default();
         println!("Yerel model yüklendi  önbellekte {} çeviri", config.cache.len());
-        config.backend = Some(Arc::new(move |texts: &[String]| opus.translate(texts)));
+        config.backend = Some(Arc::new(move |texts: &[String], _: &str| opus.translate(texts)));
     } else if !dry_run {
         let deepl = DeepLClient::new(deepl_key()?);
         config.cache_path = storage::cache_path();
         config.cache = config.cache_path.as_deref().map(storage::load_cache).unwrap_or_default();
         println!("DeepL: {}  önbellekte {} çeviri", deepl.host(), config.cache.len());
-        config.backend = Some(Arc::new(move |texts: &[String]| deepl.translate(texts)));
+        config.backend = Some(Arc::new(move |texts: &[String], context: &str| deepl.translate(texts, context)));
         config.translation.workers = 2;
+        config.translation.context = Some(ceviri_core::context::ContextWindow::default());
+        config.provider = "DeepL".into();
     }
 
     let address = match option(args, "--tv") {
@@ -234,13 +236,13 @@ fn translate(args: &[String]) -> Result<(), String> {
     let protected = Terms::new(&[]).protect(&text);
     let backend: Backend = if local {
         let opus = load_local()?;
-        Arc::new(move |texts: &[String]| opus.translate(texts))
+        Arc::new(move |texts: &[String], _: &str| opus.translate(texts))
     } else {
         let deepl = DeepLClient::new(deepl_key()?);
-        Arc::new(move |texts: &[String]| deepl.translate(texts))
+        Arc::new(move |texts: &[String], context: &str| deepl.translate(texts, context))
     };
     let started = Instant::now();
-    let translated = backend(&[protected]).map_err(|e| format!("Çeviri hatası: {e}"))?;
+    let translated = backend(&[protected], "").map_err(|e| format!("Çeviri hatası: {e}"))?;
     println!("{text}  →  {}  ({} ms)", terms::unprotect(translated.first().map(String::as_str).unwrap_or("")), started.elapsed().as_millis());
     Ok(())
 }

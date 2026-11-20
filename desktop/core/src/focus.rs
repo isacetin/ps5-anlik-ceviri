@@ -103,6 +103,77 @@ pub fn classify(blocks: &[StableBlock], options: &Options) -> Vec<Kind> {
         .collect()
 }
 
+/// Metnin ayrıntılı kategorisi: yalnızca öncelik (hangi metin önce çevrilir) ve bağlam (hangi
+/// metin sonraki çevirilere bağlam olur) için kullanılır. Basit ve deterministiktir; yanlış
+/// kategori hiçbir metnin çevrilmesini engellemez.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Category {
+    /// Ekranın alt-orta bölgesindeki cümle: altyazı.
+    Subtitle,
+    /// Başka yerdeki cümle: diyalog kutusu, açıklama.
+    Dialogue,
+    /// "Objective:", "New Quest" gibi görev bildirimi.
+    Objective,
+    /// "Warning", "Low Health", tümü büyük harfli kısa uyarı.
+    Warning,
+    Menu,
+    /// Rakam ağırlıklı kısa gösterge ("Ammo 30/120").
+    Hud,
+    /// Logo, tabela; ya da sınıflandırılamayan.
+    Other,
+}
+
+impl Category {
+    /// Küçük sayı önce çevrilir: ekrandaki konuşma en önemlisidir.
+    pub fn priority(self) -> u8 {
+        match self {
+            Category::Subtitle => 0,
+            Category::Dialogue => 1,
+            Category::Warning => 2,
+            Category::Objective => 3,
+            Category::Menu => 4,
+            Category::Hud => 5,
+            Category::Other => 6,
+        }
+    }
+
+    /// Bu kategorideki metin sonraki çevirilere bağlam olabilir mi (yalnızca konuşma).
+    pub fn is_conversation(self) -> bool {
+        matches!(self, Category::Subtitle | Category::Dialogue)
+    }
+}
+
+const OBJECTIVE_MARKERS: &[&str] = &["objective", "new objective", "quest", "new quest", "mission", "quest updated", "quest complete", "task", "goal"];
+const WARNING_MARKERS: &[&str] = &["warning", "caution", "danger", "alert", "low health", "low ammo"];
+
+/// `kind` (`classify` sonucu) ve metne göre kategori.
+pub fn categorize(block: &StableBlock, kind: Kind, options: &Options) -> Category {
+    let lower = block.text.trim().to_lowercase();
+    let starts_with = |markers: &[&str]| markers.iter().any(|m| lower.starts_with(m) && lower[m.len()..].starts_with([':', ' ', '-', '!']) || lower == *m);
+    if starts_with(OBJECTIVE_MARKERS) {
+        return Category::Objective;
+    }
+    let letters: Vec<char> = block.text.chars().filter(|c| c.is_alphabetic()).collect();
+    let shouting = letters.len() >= 4 && letters.iter().all(|c| c.is_uppercase()) && block.text.split_whitespace().count() <= 4;
+    if starts_with(WARNING_MARKERS) || (shouting && block.text.trim_end().ends_with('!')) {
+        return Category::Warning;
+    }
+    match kind {
+        Kind::Dialogue if in_subtitle_zone(block.bbox, options) => Category::Subtitle,
+        Kind::Dialogue => Category::Dialogue,
+        Kind::Menu => {
+            let digits = block.text.chars().filter(char::is_ascii_digit).count();
+            if digits > 0 && digits * 2 >= letters.len() {
+                Category::Hud
+            } else {
+                Category::Menu
+            }
+        }
+        Kind::Other => Category::Other,
+    }
+}
+
 fn in_subtitle_zone(bbox: Rect, options: &Options) -> bool {
     let center_x = bbox.x + bbox.width / 2.0;
     let center_y = bbox.y + bbox.height / 2.0;
@@ -199,8 +270,27 @@ pub fn beside(bbox: Rect, line_height: f64) -> Rect {
 mod tests {
     use super::*;
 
+    #[test]
+    fn kategori_ve_oncelik() {
+        let o = Options::default();
+        let subtitle = block("s", "I thought you would never come back.", 0.3, 0.85, 0.4, 0.04);
+        assert_eq!(categorize(&subtitle, Kind::Dialogue, &o), Category::Subtitle);
+        let dialogue = block("d", "The merchant has left the village.", 0.05, 0.2, 0.4, 0.04);
+        assert_eq!(categorize(&dialogue, Kind::Dialogue, &o), Category::Dialogue);
+        assert_eq!(categorize(&block("q", "Objective: Find the key", 0.05, 0.1, 0.3, 0.03), Kind::Dialogue, &o), Category::Objective);
+        assert_eq!(categorize(&block("q2", "New Quest", 0.05, 0.1, 0.3, 0.03), Kind::Menu, &o), Category::Objective);
+        assert_eq!(categorize(&block("w", "LOW HEALTH!", 0.4, 0.1, 0.2, 0.03), Kind::Menu, &o), Category::Warning);
+        assert_eq!(categorize(&block("m", "Options", 0.1, 0.5, 0.1, 0.03), Kind::Menu, &o), Category::Menu);
+        assert_eq!(categorize(&block("h", "Ammo 30/120", 0.8, 0.9, 0.1, 0.03), Kind::Menu, &o), Category::Hud);
+        assert_eq!(categorize(&block("o", "Ocean View", 0.1, 0.5, 0.1, 0.03), Kind::Other, &o), Category::Other);
+        // "Questions" görev değildir: işaret kelimenin tamamı olmalı.
+        assert_eq!(categorize(&block("x", "Questions about the war remain.", 0.3, 0.85, 0.4, 0.04), Kind::Dialogue, &o), Category::Subtitle);
+        assert!(Category::Subtitle.priority() < Category::Menu.priority());
+        assert!(Category::Dialogue.is_conversation() && !Category::Menu.is_conversation());
+    }
+
     fn block(id: &str, text: &str, x: f64, y: f64, w: f64, h: f64) -> StableBlock {
-        StableBlock { id: id.into(), bbox: Rect::new(x, y, w, h), line_height: h, text: text.into(), still_seconds: 5.0 }
+        StableBlock { id: id.into(), bbox: Rect::new(x, y, w, h), line_height: h, text: text.into(), still_seconds: 5.0, confidence: 0.9 }
     }
 
     fn kinds(blocks: &[StableBlock]) -> Vec<Kind> {

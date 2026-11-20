@@ -22,6 +22,10 @@ pub struct MergedBlock {
     /// Medyan satır yüksekliği (normalize); TV'de font boyutu için başlangıç değeri.
     pub line_height: f64,
     pub text: String,
+    /// Satırların ortalama OCR güveni (0...1); stabilizasyon süresini ayarlamak için.
+    pub confidence: f64,
+    /// Bloğu oluşturan OCR satırı sayısı (1'den büyükse çok satırlı birleşme).
+    pub line_count: usize,
 }
 
 #[derive(Clone, Debug)]
@@ -190,7 +194,14 @@ fn make_block(lines: &[&TextLine]) -> MergedBlock {
     let top = lines.iter().map(|l| l.bbox.y).fold(f64::INFINITY, f64::min);
     let right = lines.iter().map(|l| l.bbox.right()).fold(f64::NEG_INFINITY, f64::max);
     let bottom = lines.iter().map(|l| l.bbox.bottom()).fold(f64::NEG_INFINITY, f64::max);
-    MergedBlock { bbox: Rect::new(left, top, right - left, bottom - top), line_height: median_height, text: join_rows(&row_texts) }
+    let confidence = lines.iter().map(|l| l.confidence).sum::<f64>() / lines.len() as f64;
+    MergedBlock {
+        bbox: Rect::new(left, top, right - left, bottom - top),
+        line_height: median_height,
+        text: join_rows(&row_texts),
+        confidence,
+        line_count: lines.len(),
+    }
 }
 
 /// Satırları boşlukla birleştirir; satır sonu tirelemesini ("trav-" + "eler") geri alır.
@@ -323,6 +334,30 @@ mod tests {
         ]);
 
         assert_eq!(texts(&blocks), ["Hello there"]);
+    }
+
+    #[test]
+    fn iki_satira_bolunmus_altyazi_tek_cumle_olur() {
+        let blocks = merge(&[
+            line("I thought you would", 0.40, 0.85, 0.20, 0.04),
+            TextLine { confidence: 0.7, ..line("never come back.", 0.41, 0.895, 0.18, 0.04) },
+        ]);
+
+        assert_eq!(texts(&blocks), ["I thought you would never come back."]);
+        assert_eq!(blocks[0].line_count, 2);
+        assert!((blocks[0].confidence - 0.8).abs() < 1e-9);
+    }
+
+    #[test]
+    fn farkli_bolgelerdeki_metinler_birlesmez() {
+        // Üstte görev bildirimi, altta altyazı: tek cümle yapılmaz.
+        let blocks = merge(&[
+            line("New objective: find the key", 0.05, 0.08, 0.30, 0.035),
+            line("never come back.", 0.41, 0.85, 0.18, 0.04),
+        ]);
+
+        assert_eq!(blocks.len(), 2);
+        assert!(blocks.iter().all(|b| b.line_count == 1));
     }
 
     #[test]

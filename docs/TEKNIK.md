@@ -179,6 +179,47 @@ kayıt) ve bellek. Hata notları 20 sn sonra kendiliğinden kalkar; kalıcı sor
 `CEVIRI_DEBUG=1` ile teşhis ve toparlanma kayıtları ayrıca standart hata çıkışına yazılır;
 varsayılan olarak kapalıdır, dosyaya log yazılmaz.
 
+### Akıllı altyazı tanıma, oyuna duyarlı çeviri, toparlanma koordinatörü
+
+Ayrıntılı tasarım ve gerekçe: `IMPLEMENTATION_PLAN.md`.
+
+```
+OCR → ocr_text → block_merger (çok satır, güven) → Stabilizer (aday takibi, uyarlamalı bekleme)
+  → focus (tür + kategori/öncelik) → resolve::Resolver (düzeltme → tam terim → menü → <x>ad/<g>terim)
+  → Translator (birebir → normalize → rakam kardeş; profil kapsamı; oturum belleği; bağlam)
+  → işçiler + devre kesici → yalnızca ŞU AN ekrandaki metnin çevirisi gösterilir → TV / overlay
+Okuma hataları → RecoveryCoordinator (Degraded → Recovering → Verifying → Running | Unavailable)
+Uyku (duvar−monoton saat farkı) → sahne + bağlam temizlenir, beklemeler sıfırlanır, okuyucu yenilenir
+```
+
+- **Uyarlamalı stabilizasyon** (`core/stabilizer.rs`): taban 2 kare + 0,3 sn; öncekinin devamı olarak
+  büyüyen noktalamasız metin +0,5 sn; daktilo görülen oyunda noktalamasız uzun metin +0,3 sn; düşük
+  güven +1 kare/+0,2 sn; cümle sonu + güven ≥ 0,9 → 0,15 sn; üst sınır 1,5 sn. Kutusu genişleyen metin
+  aynı takipte kalır.
+- **Oyun profili** (`core/profile.rs`): `PS5Ceviri/profiles/<id>.json`; ad, tür, üslup, karakterler,
+  sözlük, motor, altyazı/OCR/bağlam ayarları, kullanıcı düzeltmeleri (terim → sözlüğün en üst katmanı;
+  tam metin → modele gitmez). Kullanıcının genel sözlüğü: `PS5Ceviri/glossary.json`.
+- **Terim sözlüğü** (`core/term_glossary.rs`): öncelik kullanıcı-oyun > profil > kullanıcı-genel >
+  yerleşik; uzun ifade önce, kelime sınırı, İngilizce çoğul → -lar/-ler, büyük/küçük harf taşınır.
+  Terim modele Türkçesiyle `<g>…</g>` içinde gider (DeepL `ignore_tags=x,g`, Opus yer tutucu); kesmeli
+  ek cins isimde kaldırılır ("Görev'i" → "Görevi").
+- **Çeviri belleği** (`core/translator.rs`): bulanık eşleştirme yok. Kısa metin (≤ 3 kelime) profil
+  kapsamlı anahtarla (`<profil>␟metin`); bağlamla çevrilen kısa metin yalnızca oturumda. Bağlam
+  (`core/context.rs`) yalnızca DeepL'de, yalnızca konuşma replikleri, sahne değişince sıfırlanır.
+- **Devre kesici**: art arda 3 hata (anahtar/kotada 1) → açık; süre dolunca tek metinlik deneme.
+  429 `Retry-After`'a uyulur; 403/456 için 5 dk → 1 sa; 4xx yalnızca o metni bekletir.
+- **Swift OCR atlama** (`OCRReuse`): kare sıra numarası ve kırpma aynıysa Vision çalışmaz.
+- **Hızlı altyazı:** cümle sonu olan, büyümeyen, güveni ≥ 0,97 metin (Vision temiz okumada 1,0
+  verir) tek karede kabul edilir; oyunda daktilo efekti görüldüyse kapanır. Yeni metin oturmayı
+  beklerken sonraki kare hemen okunur. Yerel modelde tamamlanmış görünen adayın çevirisi oturmadan
+  istenir (`Config::prefetch`; DeepL'de kota harcamasın diye kapalı).
+- **Yerel model takılması** (`opus/src/reload.rs`): her çağrı süre bütçesiyle (öğrenilen hızın ~8 katı,
+  en az 0,7 sn) yardımcı thread'de koşar; aşılırsa model bir kez taze yüklenip aynı metin hemen yeniden
+  çevrilir. En çok 1 takılı kopya, 10 dk'da en çok 3 yükleme; sınır doluysa hata döner (servis bekler).
+- Gerçek-model testleri: `CEVIRI_REQUIRE_MODEL=1 cargo test -p ceviri-opus` (model yoksa başarısız).
+- Mutasyon doğrulaması: önemli her kuralın testi, kural geri alınınca kırılır (19 mutasyon).
+- Simülasyon: `cargo test -p ceviri-engine --test simulasyon -- --nocapture` modele giden metinleri yazar.
+
 ### TV tarafı: uygulama
 
 - **Overlay penceresi:** `TYPE_APPLICATION_OVERLAY`, `FLAG_NOT_FOCUSABLE | FLAG_NOT_TOUCHABLE |

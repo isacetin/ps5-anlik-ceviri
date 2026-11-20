@@ -5,6 +5,7 @@
 //! HTTP platform katmanında yapılır, sonuçlar bu modüllere verilir.
 
 pub mod block_merger;
+pub mod context;
 pub mod deepl;
 pub mod focus;
 pub mod frame_stats;
@@ -14,10 +15,14 @@ pub mod health;
 pub mod language;
 pub mod ocr_text;
 pub mod opus_text;
+pub mod profile;
 pub mod protocol;
+pub mod recovery;
+pub mod resolve;
 pub mod screen;
 pub mod stabilizer;
 pub mod storage;
+pub mod term_glossary;
 pub mod terms;
 pub mod translator;
 
@@ -27,6 +32,6 @@ pub use geometry::Rect;
 pub use protocol::{OverlayBlock, OverlayMessage};
 pub use health::{Diagnostics, Level, Stage};
 pub use screen::{FrameInfo, ReadError, Reading, ScreenReader, SharedRegion};
-pub use stabilizer::{StableBlock, Stabilizer};
+pub use stabilizer::{CandidateInfo, CandidateState, StableBlock, Stabilizer, SubtitleStats};
 pub use terms::Terms;
-pub use translator::{Batch, TranslationError, Translator, TranslatorStats};
+pub use translator::{Batch, Breaker, ErrorClass, TranslationError, Translator, TranslatorStats, Wanted};

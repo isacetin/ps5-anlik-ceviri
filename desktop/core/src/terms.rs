@@ -12,6 +12,8 @@ const FUZZY_MIN_CHARS: usize = 6;
 pub struct Terms {
     /// Çok kelimeli ve uzun adlar önce denenir.
     entries: Vec<Entry>,
+    /// Kullanıcının verdiği adlar (`with` ile genişletmek için).
+    user: Vec<String>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -44,7 +46,12 @@ impl Terms {
             entries.push(Entry { canonical: term, words, separators });
         }
         entries.sort_by(|a, b| b.words.len().cmp(&a.words.len()).then(b.canonical.chars().count().cmp(&a.canonical.chars().count())));
-        Terms { entries }
+        Terms { entries, user: user.to_vec() }
+    }
+
+    /// Ek adlarla (oyun profilinin karakterleri) yeni liste.
+    pub fn with(&self, extra: &[String]) -> Terms {
+        Terms::new(&[self.user.clone(), extra.to_vec()].concat())
     }
 
     /// DeepL'e gidecek hali: adlar `<x>doğru yazım</x>`, geri kalan XML'e göre kaçışlı.
@@ -76,6 +83,11 @@ impl Terms {
         }
         rest.push_str(&text[cursor..]);
         !rest.chars().any(char::is_alphabetic)
+    }
+
+    /// Metindeki adlar: bayt aralığı ve doğru yazımı (sözlük adların içine girmesin diye).
+    pub(crate) fn spans(&self, text: &str) -> Vec<(usize, usize, String)> {
+        self.find(text).into_iter().map(|f| (f.start, f.end, f.canonical.to_string())).collect()
     }
 
     fn find(&self, text: &str) -> Vec<Found<'_>> {
@@ -112,9 +124,29 @@ impl Terms {
     }
 }
 
-/// DeepL yanıtından işaretleri kaldırır ve kaçışları geri çevirir.
+/// DeepL yanıtından işaretleri kaldırır ve kaçışları geri çevirir. Sözlük teriminden (`<g>`)
+/// sonra kesmeyle gelen ek kesmesiz yazılır: "Görev'i" → "Görevi" (cins isim; adlarda kesme kalır).
 pub fn unprotect(translated: &str) -> String {
-    translated
+    let mut joined = String::with_capacity(translated.len());
+    let mut rest = translated;
+    while let Some(at) = rest.find("</g>") {
+        let term = rest[..at].rfind("<g>").map(|open| &rest[open + 3..at]).unwrap_or("");
+        joined.push_str(&rest[..at]);
+        rest = &rest[at + 4..];
+        let mut chars = rest.chars();
+        if let (Some(apostrophe @ ('\'' | '’')), Some(next)) = (chars.next(), chars.next()) {
+            if next.is_alphabetic() {
+                // Ek, terimin Türkçe okunuşuna (ve iyelikli tamlamaya) göre yeniden yazılır.
+                let after = &rest[apostrophe.len_utf8()..];
+                let end = after.find(|c: char| !c.is_alphabetic()).unwrap_or(after.len());
+                joined.push_str(&crate::opus_text::glossary_suffix(&term.replace("&amp;", "&"), &after[..end]));
+                rest = &after[end..];
+            }
+        }
+    }
+    joined.push_str(rest);
+    joined
+        .replace("<g>", "")
         .replace("<x>", "")
         .replace("</x>", "")
         .replace("&lt;", "<")
@@ -140,12 +172,12 @@ fn separator(between: &str) -> String {
     between.chars().filter(|c| !c.is_whitespace()).collect()
 }
 
-fn escape(text: &str) -> String {
+pub(crate) fn escape(text: &str) -> String {
     text.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
 }
 
 /// Harf/rakam dizilerinin bayt aralıkları ("It's" → "It", "s").
-fn word_ranges(text: &str) -> Vec<(usize, usize)> {
+pub(crate) fn word_ranges(text: &str) -> Vec<(usize, usize)> {
     let mut ranges = Vec::new();
     let mut start = None;
     for (index, c) in text.char_indices() {

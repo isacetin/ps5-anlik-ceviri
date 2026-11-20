@@ -1,10 +1,8 @@
 //! DeepL /v2/translate çağrısı (EN → TR). İstek/yanıt formatı `ceviri_core::deepl`'dedir.
 
-use std::collections::VecDeque;
-use std::sync::Mutex;
 use std::time::Duration;
 
-use ceviri_core::{deepl, terms};
+use ceviri_core::deepl;
 use ceviri_core::TranslationError;
 use ureq::Agent;
 
@@ -12,8 +10,6 @@ pub struct DeepLClient {
     key: String,
     endpoint: String,
     agent: Agent,
-    /// Son çevrilen replikler (İngilizce); sonraki isteğe bağlam olarak eklenir.
-    recent: Mutex<VecDeque<String>>,
 }
 
 impl DeepLClient {
@@ -34,7 +30,7 @@ impl DeepLClient {
             .http_status_as_error(false)
             .build()
             .into();
-        DeepLClient { key: key.into(), endpoint: endpoint.into(), agent, recent: Mutex::new(VecDeque::new()) }
+        DeepLClient { key: key.into(), endpoint: endpoint.into(), agent }
     }
 
     pub fn host(&self) -> &str {
@@ -42,42 +38,28 @@ impl DeepLClient {
         rest.split('/').next().unwrap_or(rest)
     }
 
-    pub fn translate(&self, texts: &[String]) -> Result<Vec<String>, TranslationError> {
+    /// `context`: az önce geçen konuşma ve oyun ipucu (çekirdekteki `ContextWindow`); boş olabilir.
+    pub fn translate(&self, texts: &[String], context: &str) -> Result<Vec<String>, TranslationError> {
         let mut response = self
             .agent
             .post(&self.endpoint)
             .header("Authorization", &deepl::auth_header(&self.key))
             .header("Content-Type", "application/json")
-            .send(deepl::request_body_with_context(texts, &self.context()))
+            .send(deepl::request_body_with_context(texts, context))
             .map_err(network_error)?;
-        if let Some(error) = deepl::error_for_status(response.status().as_u16()) {
-            return Err(error);
+        match deepl::error_for_status(response.status().as_u16()) {
+            None => {}
+            Some(TranslationError::RateLimited(_)) => {
+                let retry = response.headers().get("retry-after").and_then(|v| v.to_str().ok()).and_then(deepl::parse_retry_after);
+                return Err(TranslationError::RateLimited(retry));
+            }
+            Some(error) => return Err(error),
         }
         let body = response.body_mut().read_to_string().map_err(|e| match network_error(e) {
             TranslationError::Timeout => TranslationError::Timeout,
             _ => TranslationError::InvalidResponse,
         })?;
-        let translations = deepl::parse_response(&body)?;
-        self.remember(texts);
-        Ok(translations)
-    }
-
-    fn context(&self) -> String {
-        self.recent.lock().unwrap().iter().cloned().collect::<Vec<_>>().join(" ")
-    }
-
-    fn remember(&self, texts: &[String]) {
-        let mut recent = self.recent.lock().unwrap();
-        for text in texts {
-            // İstek metni ad işaretli ve XML kaçışlıdır; bağlam düz metin olmalı.
-            let plain = terms::unprotect(text);
-            if deepl::is_context_worthy(&plain) && !recent.contains(&plain) {
-                recent.push_back(plain);
-            }
-        }
-        while recent.len() > deepl::CONTEXT_LINES || recent.iter().map(|t| t.chars().count()).sum::<usize>() > deepl::CONTEXT_CHARS && recent.len() > 1 {
-            recent.pop_front();
-        }
+        deepl::parse_response(&body)
     }
 }
 
@@ -101,6 +83,10 @@ mod tests {
 
     /// Tek isteğe verilen yanıtı döndüren sahte DeepL; gelen isteğin başlıklarını ve gövdesini iletir.
     fn fake_deepl(status: u16, body: &'static str) -> (String, mpsc::Receiver<(Vec<String>, String)>) {
+        fake_deepl_with(status, "", body)
+    }
+
+    fn fake_deepl_with(status: u16, extra_headers: &'static str, body: &'static str) -> (String, mpsc::Receiver<(Vec<String>, String)>) {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let endpoint = format!("http://{}/v2/translate", listener.local_addr().unwrap());
         let (sender, receiver) = mpsc::channel();
@@ -124,7 +110,7 @@ mod tests {
             reader.read_exact(&mut request_body).unwrap();
             sender.send((headers, String::from_utf8(request_body).unwrap())).unwrap();
             let mut stream = stream;
-            write!(stream, "HTTP/1.1 {status} X\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).unwrap();
+            write!(stream, "HTTP/1.1 {status} X\r\nContent-Type: application/json\r\n{extra_headers}Content-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).unwrap();
         });
         (endpoint, receiver)
     }
@@ -134,7 +120,7 @@ mod tests {
         let (endpoint, requests) = fake_deepl(200, r#"{"translations":[{"detected_source_language":"EN","text":"Kapı kilitli."}]}"#);
         let client = DeepLClient::with_endpoint("anahtar:fx", endpoint);
 
-        let result = client.translate(&["The door is locked.".into()]);
+        let result = client.translate(&["The door is locked.".into()], "");
 
         assert_eq!(result, Ok(vec!["Kapı kilitli.".to_string()]));
         let (headers, body) = requests.recv().unwrap();
@@ -143,22 +129,27 @@ mod tests {
     }
 
     #[test]
-    fn onceki_replikler_sonraki_istege_baglam_olur() {
+    fn baglam_istege_eklenir_bossa_gonderilmez() {
         let reply = r#"{"translations":[{"text":"x"}]}"#;
-        let (first, _first_requests) = fake_deepl(200, reply);
-        let (second, second_requests) = fake_deepl(200, reply);
-        let mut client = DeepLClient::with_endpoint("anahtar", first);
+        let (with, with_requests) = fake_deepl(200, reply);
+        let (without, without_requests) = fake_deepl(200, reply);
 
-        client.translate(&["Are you ready to leave?".into()]).unwrap();
-        client.translate(&["New Game".into()]).unwrap_err(); // sunucu tek istek karşılar: ağ hatası
-        client.endpoint = second;
-        client.translate(&["Not yet.".into()]).unwrap();
+        DeepLClient::with_endpoint("anahtar", with).translate(&["Not yet.".into()], "Are you ready to leave?").unwrap();
+        DeepLClient::with_endpoint("anahtar", without).translate(&["Not yet.".into()], "").unwrap();
 
-        let (_, body) = second_requests.recv().unwrap();
-        let body: serde_json::Value = serde_json::from_str(&body).unwrap();
-        // Menü öğesi ve başarısız istek bağlama girmez.
+        let body: serde_json::Value = serde_json::from_str(&with_requests.recv().unwrap().1).unwrap();
         assert_eq!(body["context"], "Are you ready to leave?");
         assert_eq!(body["text"], serde_json::json!(["Not yet."]));
+        let body: serde_json::Value = serde_json::from_str(&without_requests.recv().unwrap().1).unwrap();
+        assert!(body.get("context").is_none());
+    }
+
+    #[test]
+    fn istek_siniri_retry_after_okunur() {
+        let (endpoint, _requests) = fake_deepl_with(429, "Retry-After: 17\r\n", "{}");
+        let client = DeepLClient::with_endpoint("anahtar", endpoint);
+
+        assert_eq!(client.translate(&["Hello".into()], ""), Err(TranslationError::RateLimited(Some(17))));
     }
 
     #[test]
@@ -166,7 +157,7 @@ mod tests {
         let (endpoint, _requests) = fake_deepl(456, "{}");
         let client = DeepLClient::with_endpoint("anahtar", endpoint);
 
-        assert_eq!(client.translate(&["Hello".into()]), Err(TranslationError::QuotaExceeded));
+        assert_eq!(client.translate(&["Hello".into()], ""), Err(TranslationError::QuotaExceeded));
     }
 
     #[test]
@@ -181,16 +172,16 @@ mod tests {
         let client = DeepLClient::with_endpoint("a", endpoint);
 
         let started = std::time::Instant::now();
-        assert_eq!(client.translate(&["x".into()]), Err(TranslationError::Timeout));
+        assert_eq!(client.translate(&["x".into()], ""), Err(TranslationError::Timeout));
         assert!(started.elapsed() < Duration::from_secs(10), "{:?}", started.elapsed());
     }
 
     #[test]
     fn sunucu_hatalari_eslenir() {
-        for (status, expected) in [(429, TranslationError::RateLimited), (500, TranslationError::Http(500)), (503, TranslationError::Http(503)), (403, TranslationError::Unauthorized)] {
+        for (status, expected) in [(429, TranslationError::RateLimited(None)), (500, TranslationError::Http(500)), (503, TranslationError::Http(503)), (403, TranslationError::Unauthorized)] {
             let (endpoint, _requests) = fake_deepl(status, "{}");
             let client = DeepLClient::with_endpoint("anahtar", endpoint);
-            assert_eq!(client.translate(&["Hello".into()]), Err(expected));
+            assert_eq!(client.translate(&["Hello".into()], ""), Err(expected));
         }
     }
 
@@ -198,7 +189,7 @@ mod tests {
     fn bos_yanit_gecersizdir() {
         let (endpoint, _requests) = fake_deepl(200, "");
         let client = DeepLClient::with_endpoint("anahtar", endpoint);
-        assert_eq!(client.translate(&["Hello".into()]), Err(TranslationError::InvalidResponse));
+        assert_eq!(client.translate(&["Hello".into()], ""), Err(TranslationError::InvalidResponse));
     }
 
     #[test]
@@ -208,6 +199,6 @@ mod tests {
 
         let port = TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
         let client = DeepLClient::with_endpoint("a", format!("http://127.0.0.1:{port}/v2/translate"));
-        assert!(matches!(client.translate(&["x".into()]), Err(TranslationError::Network(_))));
+        assert!(matches!(client.translate(&["x".into()], ""), Err(TranslationError::Network(_))));
     }
 }

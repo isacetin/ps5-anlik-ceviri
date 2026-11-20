@@ -39,6 +39,19 @@ fn save_settings(controller: State<Controller>, settings: Settings) -> Result<()
     settings.save()
 }
 
+/// Oyun profilini kaydeder ve seçer (boş ad: profil seçimini kaldırır); ayarlar da yazılır.
+#[tauri::command]
+fn save_profile(controller: State<Controller>, name: String, genre: String, glossary: String) -> Result<(), String> {
+    let settings = controller.save_profile(&name, &genre, &glossary)?;
+    settings.save()
+}
+
+/// Seçili oyun profiline çeviri düzeltmesi ekler (yalnızca o oyuna uygulanır).
+#[tauri::command]
+fn add_correction(controller: State<Controller>, source: String, translation: String, term: bool) -> Result<(), String> {
+    controller.add_correction(&source, &translation, term)
+}
+
 #[tauri::command]
 fn start(controller: State<Controller>) -> Result<(), String> {
     controller.start()
@@ -59,7 +72,7 @@ async fn save_deepl_key(key: String) -> Result<String, String> {
     }
     storage::save_deepl_key(&key).map_err(|e| format!("Anahtar kaydedilemedi: {e}"))?;
     tauri::async_runtime::spawn_blocking(move || {
-        let translated = DeepLClient::new(key).translate(&[SAMPLE.to_string()]).map_err(|e| format!("Anahtar kaydedildi ama DeepL denemesi başarısız: {e}"))?;
+        let translated = DeepLClient::new(key).translate(&[SAMPLE.to_string()], "").map_err(|e| format!("Anahtar kaydedildi ama DeepL denemesi başarısız: {e}"))?;
         Ok(format!("{SAMPLE} → {}", translated.first().map(String::as_str).unwrap_or("")))
     })
     .await
@@ -223,14 +236,15 @@ fn local_backend() -> Result<Backend, String> {
     if !model::is_installed(&dir) {
         return Err("Yerel çeviri modeli indirilmemiş. Ayarlar'dan indirin ya da DeepL'i seçin.".into());
     }
-    let opus = OpusTranslator::load(&dir)?;
-    Ok(Arc::new(move |texts: &[String]| opus.translate(texts)))
+    // Model içinde takılan çağrı iptal edilemez; süre bütçesi aşılınca taze kopyayla yeniden denenir.
+    let opus = ceviri_opus::reloading(&dir)?;
+    Ok(Arc::new(move |texts: &[String], _: &str| ceviri_opus::translate_guarded(&opus, texts)))
 }
 
 fn deepl_backend() -> Result<Backend, String> {
     let key = storage::deepl_key().ok_or("DeepL anahtarı yok. Ayarlardan anahtarınızı ekleyin, yerel modeli seçin ya da çevirisiz test modunu deneyin.")?;
     let client = DeepLClient::new(key);
-    Ok(Arc::new(move |texts: &[String]| client.translate(texts)))
+    Ok(Arc::new(move |texts: &[String], context: &str| client.translate(texts, context)))
 }
 
 fn main() {
@@ -262,7 +276,12 @@ fn main() {
                 Engine::Local => local_backend(),
                 Engine::Deepl => deepl_backend(),
             });
-            let caches = Caches { deepl: storage::cache_path(), local: storage::local_cache_path() };
+            let caches = Caches {
+                deepl: storage::cache_path(),
+                local: storage::local_cache_path(),
+                profiles: storage::app_dir().map(|dir| ceviri_core::profile::profiles_dir(&dir)),
+                user_glossary: storage::app_dir().map(|dir| dir.join("glossary.json")),
+            };
             let controller = Controller::new(Settings::load(), emit, make_reader, make_backend, caches);
             // Geliştirme: arayüze dokunmadan iş hattını denemek için.
             if std::env::var_os("CEVIRI_AUTOSTART").is_some() {
@@ -284,6 +303,8 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             status,
             save_settings,
+            save_profile,
+            add_correction,
             start,
             stop,
             save_deepl_key,

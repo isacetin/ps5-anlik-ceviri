@@ -67,6 +67,8 @@ public final class ScreenReader {
     /// Süre sınırına takılan yazı tanıma arka planda sürmeye devam eder. O bitmeden yenisi
     /// başlatılmaz: Vision kalıcı takılırsa her tur yeni bir istek ve kare kopyası birikmesin.
     private let ocrGate = OCRGate()
+    /// Kare değişmediyse (durağan sahne, menü) OCR yeniden çalıştırılmaz.
+    private var reuse = OCRReuse<CGImage>()
 
     public init(bundleID: String = remotePlayBundleID, fps: Double = 2, titleBarOverride: Double? = nil) {
         capture = RemotePlayCapture(bundleID: bundleID)
@@ -94,6 +96,26 @@ public final class ScreenReader {
         let scale = Double(image.width) / window.frame.width
         let titleBar = (titleBarOverride ?? (fullscreen ? 0 : 28)) * scale
         let video = Geometry.videoRect(imageWidth: Double(image.width), imageHeight: Double(image.height), topInset: titleBar)
+        let screenRect = Rect(
+            x: window.frame.minX + video.x / scale,
+            y: window.frame.minY + video.y / scale,
+            width: video.width / scale,
+            height: video.height / scale
+        )
+        if let cached = reuse.lookup(sequence: snapshot.sequence, crop: video) {
+            // Görüntü değişmedi: önceki tanıma sonucu geçerli (kopya ve Vision yok).
+            return Reading(
+                lines: cached.lines,
+                frame: cached.frame,
+                fullscreen: fullscreen,
+                captureMilliseconds: Self.milliseconds(clock.now - start),
+                ocrMilliseconds: 0,
+                screenRect: screenRect,
+                frameSequence: snapshot.sequence,
+                frameAge: snapshot.age,
+                streamRestarts: frames.stallRestarts
+            )
+        }
         // Kopya: akışın tampon havuzu küçüktür; OCR ve son kare (dump) tamponu tutmasın.
         guard
             let cropped = image.cropping(to: CGRect(x: video.x, y: video.y, width: video.width, height: video.height)),
@@ -116,18 +138,14 @@ public final class ScreenReader {
             throw ReaderError.ocrFailed("yazı tanıma: \(error)")
         }
         recognizerWarm = true
+        reuse.store(sequence: snapshot.sequence, crop: video, lines: lines, frame: frame)
         return Reading(
             lines: lines,
             frame: frame,
             fullscreen: fullscreen,
             captureMilliseconds: Self.milliseconds(captured - start),
             ocrMilliseconds: Self.milliseconds(clock.now - captured),
-            screenRect: Rect(
-                x: window.frame.minX + video.x / scale,
-                y: window.frame.minY + video.y / scale,
-                width: video.width / scale,
-                height: video.height / scale
-            ),
+            screenRect: screenRect,
             frameSequence: snapshot.sequence,
             frameAge: snapshot.age,
             streamRestarts: frames.stallRestarts
@@ -136,6 +154,7 @@ public final class ScreenReader {
 
     public func stop() async {
         window = nil
+        reuse.clear()
         await frames.stop()
     }
 

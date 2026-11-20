@@ -19,14 +19,15 @@ pub fn auth_header(key: &str) -> String {
     format!("DeepL-Auth-Key {key}")
 }
 
-/// Metinler XML olarak gider: `terms::Terms::protect` ile kaçışlanmış olmalı; `<x>` içi çevrilmez.
+/// Metinler XML olarak gider: `terms::Terms::protect` ile kaçışlanmış olmalı; `<x>` (ad) ve `<g>`
+/// (sözlük teriminin Türkçesi) içi çevrilmez.
 #[derive(Serialize)]
 struct Request<'a> {
     text: &'a [String],
     source_lang: &'static str,
     target_lang: &'static str,
     tag_handling: &'static str,
-    ignore_tags: [&'static str; 1],
+    ignore_tags: [&'static str; 2],
     /// Çevrilmez ve kotadan düşmez; yalnızca kısa cümlelerin doğru anlaşılmasına yardım eder.
     #[serde(skip_serializing_if = "Option::is_none")]
     context: Option<&'a str>,
@@ -49,18 +50,13 @@ pub fn request_body(texts: &[String]) -> String {
 /// `context`: az önce ekranda geçen replikler (düz metin). Boşsa gönderilmez.
 pub fn request_body_with_context(texts: &[String], context: &str) -> String {
     let context = (!context.trim().is_empty()).then_some(context);
-    serde_json::to_string(&Request { text: texts, source_lang: "EN", target_lang: "TR", tag_handling: "xml", ignore_tags: ["x"], context })
+    serde_json::to_string(&Request { text: texts, source_lang: "EN", target_lang: "TR", tag_handling: "xml", ignore_tags: ["x", "g"], context })
         .expect("istek serileştirilebilir")
 }
 
-/// Bağlam olarak tutulan son replik sayısı ve toplam uzunluk sınırı (karakter).
-pub const CONTEXT_LINES: usize = 4;
-pub const CONTEXT_CHARS: usize = 600;
-
-/// Yalnızca cümle gibi duran metin bağlama girer; "Options", "Continue" gibi menü öğeleri
-/// sonraki repliğin çevirisini yanlış yöne çekebilir.
-pub fn is_context_worthy(text: &str) -> bool {
-    text.split_whitespace().count() >= 3
+/// `Retry-After` başlığı (saniye). Tarih biçimi ve geçersiz değer yok sayılır.
+pub fn parse_retry_after(value: &str) -> Option<u32> {
+    value.trim().parse::<u32>().ok().filter(|s| *s > 0)
 }
 
 pub fn parse_response(body: &str) -> Result<Vec<String>, TranslationError> {
@@ -74,7 +70,7 @@ pub fn error_for_status(status: u16) -> Option<TranslationError> {
     match status {
         200 => None,
         403 => Some(TranslationError::Unauthorized),
-        429 => Some(TranslationError::RateLimited),
+        429 => Some(TranslationError::RateLimited(None)),
         456 => Some(TranslationError::QuotaExceeded),
         other => Some(TranslationError::Http(other)),
     }
@@ -91,12 +87,14 @@ mod tests {
         assert_eq!(body["source_lang"], "EN");
         assert_eq!(body["target_lang"], "TR");
         assert_eq!(body["tag_handling"], "xml");
-        assert_eq!(body["ignore_tags"], serde_json::json!(["x"]));
+        assert_eq!(body["ignore_tags"], serde_json::json!(["x", "g"]));
 
         assert!(body.get("context").is_none());
         let with_context: serde_json::Value = serde_json::from_str(&request_body_with_context(&["Not yet.".into()], "Are you ready to leave?")).unwrap();
         assert_eq!(with_context["context"], "Are you ready to leave?");
-        assert!(is_context_worthy("Are you ready?") && !is_context_worthy("New Game"));
+        assert_eq!(parse_retry_after(" 12 "), Some(12));
+        assert_eq!(parse_retry_after("Wed, 21 Oct 2015 07:28:00 GMT"), None);
+        assert_eq!(parse_retry_after("0"), None);
 
         let response = r#"{"translations":[{"detected_source_language":"EN","text":"Kapı kilitli."}]}"#;
         assert_eq!(parse_response(response), Ok(vec!["Kapı kilitli.".to_string()]));
@@ -110,7 +108,7 @@ mod tests {
         assert_eq!(auth_header("abc:fx"), "DeepL-Auth-Key abc:fx");
         assert_eq!(error_for_status(200), None);
         assert_eq!(error_for_status(456), Some(TranslationError::QuotaExceeded));
-        assert_eq!(error_for_status(429), Some(TranslationError::RateLimited));
+        assert_eq!(error_for_status(429), Some(TranslationError::RateLimited(None)));
         assert_eq!(error_for_status(403), Some(TranslationError::Unauthorized));
         assert_eq!(error_for_status(500), Some(TranslationError::Http(500)));
     }

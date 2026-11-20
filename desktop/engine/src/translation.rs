@@ -15,11 +15,13 @@ use std::sync::mpsc::Sender;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
+use ceviri_core::context::ContextWindow;
 use ceviri_core::health::{WORKER_BUSY, WORKER_IDLE, WORKER_STUCK};
-use ceviri_core::{storage, TranslationError, Translator, TranslatorStats};
+use ceviri_core::{storage, Breaker, TranslationError, Translator, TranslatorStats, Wanted};
 
-/// Çeviri arka ucu (gerçekte DeepL ya da yerel model, testlerde sahte).
-pub type Backend = Arc<dyn Fn(&[String]) -> Result<Vec<String>, TranslationError> + Send + Sync>;
+/// Çeviri arka ucu (gerçekte DeepL ya da yerel model, testlerde sahte). İkinci argüman bağlamdır
+/// (az önce geçen konuşma ve oyun ipucu, düz metin; boş olabilir). Yerel model yok sayar.
+pub type Backend = Arc<dyn Fn(&[String], &str) -> Result<Vec<String>, TranslationError> + Send + Sync>;
 
 #[derive(Clone, Debug)]
 pub struct Options {
@@ -31,11 +33,15 @@ pub struct Options {
     /// `recovery_window` saniye içinde en fazla bu kadar işçi yenilenir (sonsuz döngü olmasın).
     pub max_recoveries: usize,
     pub recovery_window: f64,
+    /// Kısa metinlerin bellek kapsamı (oyun profili kimliği; boşsa genel).
+    pub scope: String,
+    /// İsteklere eklenecek bağlam (DeepL); `None`: bağlam gönderilmez (yerel model).
+    pub context: Option<ContextWindow>,
 }
 
 impl Default for Options {
     fn default() -> Options {
-        Options { workers: 1, stuck_after: 20.0, save_every: 5.0, max_recoveries: 3, recovery_window: 600.0 }
+        Options { workers: 1, stuck_after: 20.0, save_every: 5.0, max_recoveries: 3, recovery_window: 600.0, scope: String::new(), context: None }
     }
 }
 
@@ -48,6 +54,10 @@ pub struct ServiceStats {
     pub worker: &'static str,
     pub backoff: f64,
     pub recoveries: u64,
+    pub breaker: Breaker,
+    /// Kalıcı ve oturum belleğindeki girdi sayısı.
+    pub memory: (usize, usize),
+    pub context_lines: usize,
     pub translator: TranslatorStats,
 }
 
@@ -103,8 +113,9 @@ impl TranslationService {
     /// İşçileri başlatır. `ready`, önbelleğe yeni çeviri yazılınca haber verir.
     pub fn start(backend: Backend, cache: HashMap<String, String>, cache_path: Option<PathBuf>, options: Options, ready: Sender<()>) -> TranslationService {
         let workers = options.workers.max(1);
+        let translator = Translator::new(cache).with_scope(&options.scope).with_context(options.context.clone().unwrap_or_else(ContextWindow::disabled));
         let shared = Arc::new(Shared {
-            state: Mutex::new(State { translator: Translator::new(cache), stop: false, slots: vec![Slot::default(); workers], recovery_times: Vec::new(), recoveries: 0 }),
+            state: Mutex::new(State { translator, stop: false, slots: vec![Slot::default(); workers], recovery_times: Vec::new(), recoveries: 0 }),
             work: Condvar::new(),
             backend,
             ready,
@@ -123,9 +134,15 @@ impl TranslationService {
 
     /// Ekrandaki metinleri bildirir; önbellekteki çevirileri döner, eksikleri işçilere verir.
     pub fn request(&self, texts: &[String]) -> HashMap<String, String> {
+        let items: Vec<Wanted> = texts.iter().map(|t| Wanted::new(t.clone())).collect();
+        self.request_items(&items)
+    }
+
+    /// `request` gibi; öncelik ve konuşma bilgisiyle.
+    pub fn request_items(&self, items: &[Wanted]) -> HashMap<String, String> {
         let now = self.shared.now();
         let mut state = self.shared.lock();
-        let found = state.translator.request(texts, now);
+        let found = state.translator.request_items(items, now);
         let pending = state.translator.queued(now) > 0;
         drop(state);
         if pending {
@@ -165,6 +182,18 @@ impl TranslationService {
         messages
     }
 
+    /// Sahne değişti: konuşma bağlamı ve ona bağlı oturum belleği silinir.
+    pub fn reset_context(&self) {
+        self.shared.lock().translator.reset_context();
+    }
+
+    /// Uykudan uyanıldı: beklemeler sıfırlanır, servis tek metinle denenir, bağlam silinir.
+    pub fn on_wake(&self) {
+        let now = self.shared.now();
+        self.shared.lock().translator.on_wake(now);
+        self.shared.work.notify_all();
+    }
+
     pub fn stats(&self) -> ServiceStats {
         let now = self.shared.now();
         let state = self.shared.lock();
@@ -182,6 +211,9 @@ impl TranslationService {
             },
             backoff: state.translator.backoff_remaining(now),
             recoveries: state.recoveries,
+            breaker: state.translator.breaker(),
+            memory: state.translator.memory_len(),
+            context_lines: state.translator.context_lines(),
             translator: state.translator.stats().clone(),
         }
     }
@@ -239,7 +271,7 @@ fn worker_loop(shared: &Shared, slot: usize, generation: u64) {
                 state = shared.work.wait_timeout(state, Duration::from_millis(250)).unwrap_or_else(PoisonError::into_inner).0;
             }
         };
-        let result = catch_unwind(AssertUnwindSafe(|| (shared.backend)(&batch.texts))).unwrap_or_else(|panic| Err(TranslationError::Local(panic_message(&panic))));
+        let result = catch_unwind(AssertUnwindSafe(|| (shared.backend)(&batch.texts, &batch.context))).unwrap_or_else(|panic| Err(TranslationError::Local(panic_message(&panic))));
         let stored = {
             let mut state = shared.lock();
             let stored = state.translator.complete(&batch, result, shared.now());
@@ -298,7 +330,7 @@ mod tests {
     }
 
     fn echo() -> Backend {
-        Arc::new(|texts: &[String]| Ok(texts.iter().map(|t| format!("TR({t})")).collect()))
+        Arc::new(|texts: &[String], _: &str| Ok(texts.iter().map(|t| format!("TR({t})")).collect()))
     }
 
     /// `texts` önbelleğe girene kadar her 20 ms'de bir ister (ana döngü gibi).
@@ -330,7 +362,7 @@ mod tests {
     fn arka_uc_panigi_iscilyi_oldurmez() {
         let calls = Arc::new(AtomicUsize::new(0));
         let counter = calls.clone();
-        let backend: Backend = Arc::new(move |texts: &[String]| {
+        let backend: Backend = Arc::new(move |texts: &[String], _: &str| {
             if counter.fetch_add(1, Ordering::SeqCst) == 0 {
                 panic!("model çöktü");
             }
@@ -354,7 +386,7 @@ mod tests {
         let calls = Arc::new(AtomicUsize::new(0));
         let counter = calls.clone();
         // İlk çağrı "sonsuza kadar" takılır (testte 3 sn), sonrakiler hemen döner.
-        let backend: Backend = Arc::new(move |texts: &[String]| {
+        let backend: Backend = Arc::new(move |texts: &[String], _: &str| {
             if counter.fetch_add(1, Ordering::SeqCst) == 0 {
                 std::thread::sleep(Duration::from_secs(3));
             }
@@ -379,7 +411,7 @@ mod tests {
 
     #[test]
     fn yenileme_sayisi_sinirlidir() {
-        let backend: Backend = Arc::new(|_: &[String]| {
+        let backend: Backend = Arc::new(|_: &[String], _: &str| {
             std::thread::sleep(Duration::from_secs(2));
             Ok(vec![])
         });

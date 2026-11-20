@@ -4,6 +4,8 @@
 //!
 //! - adlar modele `ZXQ0`, `ZXQ1`… yer tutucularıyla gider, çeviriden sonra geri konur ve addan sonra
 //!   gelen ek ("ZXQ0'da" → "Store'da") adın son sesine göre yeniden uyumlanır;
+//! - sözlük terimleri (`<g>Görev</g>`, Türkçe) de yer tutucuyla gider; geri konunca ek kesmesiz ve
+//!   terimin Türkçe okunuşuna göre uyumlanır ("ZXQ0'i" → "Görevi");
 //! - baştaki madde/düğme işaretleri (`•`, `›`, `©`…) modelin sözlüğünde olmadığı için ayrılıp
 //!   çeviriden sonra geri eklenir.
 
@@ -20,7 +22,8 @@ pub struct Prepared {
     /// Modele gidecek metin; boşsa çevrilecek bir şey yoktur (yalnızca işaret).
     pub source: String,
     prefix: String,
-    names: Vec<String>,
+    /// Yer tutucuların yerine konacak metin ve sözlük terimi (Türkçe cins isim) olup olmadığı.
+    names: Vec<(String, bool)>,
 }
 
 /// `Terms::protect` çıktısını modele gidecek hale getirir.
@@ -28,11 +31,16 @@ pub fn prepare(protected: &str) -> Prepared {
     let mut text = String::with_capacity(protected.len());
     let mut names = Vec::new();
     let mut rest = protected;
-    while let Some(start) = rest.find("<x>") {
-        let Some(end) = rest[start..].find("</x>").map(|e| start + e) else { break };
+    loop {
+        let next = [("<x>", "</x>", false), ("<g>", "</g>", true)]
+            .into_iter()
+            .filter_map(|(open, close, glossary)| rest.find(open).map(|at| (at, open, close, glossary)))
+            .min_by_key(|(at, ..)| *at);
+        let Some((start, _, close, glossary)) = next else { break };
+        let Some(end) = rest[start..].find(close).map(|e| start + e) else { break };
         text.push_str(&unescape(&rest[..start]));
         text.push_str(&format!("{PLACEHOLDER}{}", names.len()));
-        names.push(unescape(&rest[start + 3..end]));
+        names.push((unescape(&rest[start + 3..end]), glossary));
         rest = &rest[end + 4..];
     }
     text.push_str(&unescape(rest));
@@ -51,7 +59,7 @@ impl Prepared {
         // Sözlükte olmayan karakterler "⁇" olarak döner.
         let mut text = translated.replace('⁇', " ").split_whitespace().collect::<Vec<_>>().join(" ");
         // ZXQ1, ZXQ10'un başı olduğu için büyükten küçüğe.
-        for (index, name) in self.names.iter().enumerate().rev() {
+        for (index, (name, glossary)) in self.names.iter().enumerate().rev() {
             let placeholder = format!("{PLACEHOLDER}{index}");
             let positions: Vec<usize> = text
                 .match_indices(&placeholder)
@@ -62,6 +70,8 @@ impl Prepared {
             let after = at + placeholder.len();
             let (suffix_end, suffix) = apostrophe_suffix(&text[after..]);
             let replacement = match suffix {
+                // Cins isimde Türkçe yazım kesmesizdir; okunuş zaten Türkçedir.
+                Some(suffix) if *glossary => format!("{name}{}", glossary_suffix(name, suffix)),
                 Some(suffix) => format!("{name}'{}", harmonize(name, suffix)),
                 None => name.clone(),
             };
@@ -76,7 +86,7 @@ impl Prepared {
     /// Yer tutucusuz hali (yedek): adlar metnin içinde, model onları da çevirebilir.
     pub fn plain(&self) -> Prepared {
         let mut source = self.source.clone();
-        for (index, name) in self.names.iter().enumerate().rev() {
+        for (index, (name, _)) in self.names.iter().enumerate().rev() {
             source = source.replace(&format!("{PLACEHOLDER}{index}"), name);
         }
         Prepared { source, prefix: self.prefix.clone(), names: Vec::new() }
@@ -94,6 +104,65 @@ fn apostrophe_suffix(after: &str) -> (usize, Option<&str>) {
     (end, Some(&after[start..end]))
 }
 
+/// Yaygın kısaltmalar: noktalarından sonra cümle bölünmez.
+const ABBREVIATIONS: &[&str] = &["mr", "mrs", "ms", "dr", "st", "jr", "sr", "vs", "prof", "lt", "sgt", "capt", "gen", "col", "e.g", "i.e", "no"];
+
+/// Metni cümlelere böler. Opus-MT birden çok cümleli girdide bazen bir cümleyi tamamen atlıyor
+/// ("Listen to me. Whatever happens…" → ilk cümle yok); cümleler ayrı çevrilip birleştirilir.
+/// Bölme yeri: `.`, `!`, `?`, `…` (ve kapanış tırnağı) + boşluk + büyük harf/tırnak/tire/yer
+/// tutucu. Kısaltma ("Mr.") ve küçük harfle devam eden üç nokta bölünmez.
+pub fn split_sentences(text: &str) -> Vec<String> {
+    let chars: Vec<(usize, char)> = text.char_indices().collect();
+    let mut parts = Vec::new();
+    let mut start = 0;
+    let mut i = 0;
+    while i < chars.len() {
+        let (_, c) = chars[i];
+        if !matches!(c, '.' | '!' | '?' | '…') {
+            i += 1;
+            continue;
+        }
+        // Noktalama dizisini ve kapanış tırnaklarını atla.
+        let mut j = i + 1;
+        while j < chars.len() && matches!(chars[j].1, '.' | '!' | '?' | '…' | '"' | '”' | '\'' | '’' | ')') {
+            j += 1;
+        }
+        let space_end = (j..chars.len()).find(|&k| !chars[k].1.is_whitespace()).unwrap_or(chars.len());
+        let has_space = space_end > j;
+        let next = chars.get(space_end).map(|(_, c)| *c);
+        let starts_new = next.is_some_and(|n| n.is_uppercase() || matches!(n, '"' | '“' | '\'' | '‘' | '-' | '—' | '¿' | '¡'));
+        let word_before = text[start..chars[i].0].rsplit(|c: char| c.is_whitespace()).next().unwrap_or("").to_lowercase();
+        let abbreviation = c == '.' && j == i + 1 && ABBREVIATIONS.contains(&word_before.trim_start_matches(|c: char| !c.is_alphanumeric()));
+        if has_space && starts_new && !abbreviation {
+            let end = chars.get(j).map_or(text.len(), |(at, _)| *at);
+            let part = text[start..end].trim();
+            if !part.is_empty() {
+                parts.push(part.to_string());
+            }
+            start = chars[space_end].0;
+            i = space_end;
+            continue;
+        }
+        i = j;
+    }
+    let rest = text[start..].trim();
+    if !rest.is_empty() {
+        parts.push(rest.to_string());
+    }
+    // Harfsiz parça (yalnız işaret) öncekine eklenir.
+    let mut merged: Vec<String> = Vec::new();
+    for part in parts {
+        match merged.last_mut() {
+            Some(last) if !part.chars().any(char::is_alphanumeric) => {
+                last.push(' ');
+                last.push_str(&part);
+            }
+            _ => merged.push(part),
+        }
+    }
+    merged
+}
+
 /// Adın son sesi: son ünlüsü, ünlüyle mi bittiği, sert ünsüzle mi bittiği.
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Ending {
@@ -107,10 +176,21 @@ const VOWELS: &str = "aeıioöuü";
 /// Adın Türkçe okunuşuna göre son sesi; İngilizce yazım için kaba kurallar ("Store" → "stor",
 /// "Cody" → "kodi", "May" → "mey"), sondaki sayılar okunuşlarıyla ("PS5" → "beş").
 fn ending(name: &str) -> Option<Ending> {
-    let lower = name.to_lowercase();
+    ending_of(name, false)
+}
+
+/// `turkish`: ad Türkçe bir kelime (sözlük terimi); okunuşu yazılışıdır.
+fn ending_of(name: &str, turkish: bool) -> Option<Ending> {
+    let lower = crate::term_glossary::turkish_lower(name);
     let tail: String = lower.trim_end_matches(|c: char| !c.is_alphanumeric()).to_string();
     let digits: String = tail.chars().rev().take_while(char::is_ascii_digit).collect::<Vec<_>>().into_iter().rev().collect();
-    let spoken = if digits.is_empty() { english_sound(&tail) } else { number_word(&digits).to_string() };
+    let spoken = if !digits.is_empty() {
+        number_word(&digits).to_string()
+    } else if turkish {
+        tail.clone()
+    } else {
+        english_sound(&tail)
+    };
     let vowel = spoken.chars().rev().find(|c| VOWELS.contains(*c))?;
     let last = spoken.chars().last()?;
     Some(Ending { vowel, ends_with_vowel: VOWELS.contains(last), voiceless: "pçtksşhf".contains(last) })
@@ -173,7 +253,29 @@ fn is_rounded(vowel: char) -> bool {
 
 /// Eki adın son sesine göre yeniden yazar: ünlü uyumu, kaynaştırma ünsüzü (y/n) ve d/t, c/ç.
 fn harmonize(name: &str, suffix: &str) -> String {
-    let Some(end) = ending(name) else { return suffix.to_string() };
+    harmonize_with(ending(name), suffix)
+}
+
+/// Sözlük terimine (Türkçe cins isim) gelen ek: ünlü uyumu terimin kendisine göre. İyelik ekli
+/// tamlamada ("Lütuf Noktası", "Kayıt Noktası") hal eklerinden önce zamir n'si gelir:
+/// "da" → "nda", "a" → "na", "ı" → "nı" ("Noktasında", "Noktasına"); "ile" eki "yla" kalır.
+pub(crate) fn glossary_suffix(term: &str, suffix: &str) -> String {
+    let harmonized = harmonize_with(ending_of(term, true), suffix);
+    let last = term.trim_end().chars().last().map(|c| crate::term_glossary::turkish_lower(&c.to_string()));
+    let possessive = term.trim().contains(' ') && last.as_deref().is_some_and(|c| "ıiuü".contains(c));
+    if !possessive || harmonized.chars().any(char::is_uppercase) {
+        return harmonized;
+    }
+    let core = harmonized.strip_prefix('y').filter(|rest| rest.starts_with(|c: char| VOWELS.contains(c))).unwrap_or(&harmonized);
+    match core.chars().next() {
+        Some(c) if VOWELS.contains(c) => format!("n{core}"),
+        Some('d' | 't') => format!("nd{}", &core[1..]),
+        _ => harmonized,
+    }
+}
+
+fn harmonize_with(end: Option<Ending>, suffix: &str) -> String {
+    let Some(end) = end else { return suffix.to_string() };
     let mut chars: Vec<char> = suffix.chars().collect();
     if chars.iter().any(|c| c.is_uppercase()) {
         return suffix.to_string();
@@ -327,6 +429,40 @@ mod tests {
         for (name, suffix, expected) in cases {
             assert_eq!(harmonize(name, suffix), expected, "{name}'{suffix}");
         }
+    }
+
+    #[test]
+    fn sozluk_terimi_yer_tutucuyla_gider_ek_kesmesiz_uyumlanir() {
+        let prepared = prepare("Complete the <g>Görev</g> with <x>Geralt</x>");
+        assert_eq!(prepared.source, "Complete the ZXQ0 with ZXQ1");
+
+        // Model eki yer tutucuya göre çekti ("sıfır" → ı); terime göre düzelir ve kesme kalkar.
+        let shown = unprotect(&prepared.finish("ZXQ1 ile ZXQ0'ı tamamla").unwrap());
+        assert_eq!(shown, "Geralt ile Görevi tamamla");
+        let shown = unprotect(&prepare("Open <g>Envanter</g>").finish("ZXQ0'ı aç").unwrap());
+        assert_eq!(shown, "Envanteri aç");
+        let shown = unprotect(&prepare("<g>Kutu</g> here").finish("ZXQ0'da").unwrap());
+        assert_eq!(shown, "Kutuda");
+        // İyelik ekli tamlama: zamir n'si.
+        let shown = unprotect(&prepare("Rest at the <g>Lütuf Noktası</g>.").finish("ZXQ0'da dinlen.").unwrap());
+        assert_eq!(shown, "Lütuf Noktasında dinlen.");
+        for (suffix, expected) in [("a", "na"), ("ı", "nı"), ("dan", "ndan"), ("la", "yla"), ("ın", "nın"), ("ya", "na")] {
+            assert_eq!(glossary_suffix("Kayıt Noktası", suffix), expected, "{suffix}");
+        }
+        // Tek kelimelik ünlüyle biten terimde kaynaştırma y kalır.
+        assert_eq!(glossary_suffix("Kutu", "a"), "ya");
+    }
+
+    #[test]
+    fn cumlelere_bolunur() {
+        assert_eq!(split_sentences("Listen to me. Whatever happens tonight, promise me."), ["Listen to me.", "Whatever happens tonight, promise me."]);
+        assert_eq!(split_sentences("Run! Get down! \"Who's there?\" - Me."), ["Run!", "Get down!", "\"Who's there?\"", "- Me."]);
+        assert_eq!(split_sentences("Ask Mr. Smith about it."), ["Ask Mr. Smith about it."]);
+        assert_eq!(split_sentences("Wait... what was that?"), ["Wait... what was that?"]);
+        assert_eq!(split_sentences("Version 2.5 is out."), ["Version 2.5 is out."]);
+        assert_eq!(split_sentences("Find ZXQ0. ZXQ1 is waiting."), ["Find ZXQ0.", "ZXQ1 is waiting."]);
+        assert_eq!(split_sentences("Jump"), ["Jump"]);
+        assert!(split_sentences("   ").is_empty());
     }
 
     #[test]

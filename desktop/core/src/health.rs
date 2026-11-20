@@ -9,6 +9,9 @@
 
 use serde::Serialize;
 
+use crate::recovery::{RecoveryStatus, SystemState};
+use crate::stabilizer::{CandidateInfo, SubtitleStats};
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum Level {
@@ -38,6 +41,10 @@ pub enum Stage {
     TranslationDown,
     /// Çeviriler hazır ama TV'ye ulaşılamıyor.
     OutputDown,
+    /// Okuyucu yeniden kuruluyor ya da yenilemesi doğrulanıyor.
+    Recovering,
+    /// Kendiliğinden düzelmiyor: kullanıcı bakmalı (anahtar, kota, sürekli yakalama hatası).
+    Unavailable,
     /// Yazı bulundu, çeviri bekleniyor.
     Translating,
     /// Yazı bulundu ama hepsi ayıklandı (Türkçe, ad, logo, sayı).
@@ -126,6 +133,45 @@ pub struct Diagnostics {
     /// Kendiliğinden toparlanma sayısı (tur hatası, okuyucu/çeviri işçisi yenileme).
     pub recoveries: u64,
     pub memory_mb: Option<f64>,
+
+    // Akıllı altyazı tanıma
+    /// Takip edilen adaylar (metin içermez); en önemlisi `active_candidate`.
+    pub candidates: Vec<CandidateInfo>,
+    pub active_candidate: Option<CandidateInfo>,
+    /// Ekrandaki adayın çeviri/gösterim aşaması: "bekleniyor", "çevriliyor", "gösteriliyor"…
+    pub candidate_stage: String,
+    pub subtitle: SubtitleStats,
+    /// Çok satırdan birleşen blok sayısı (oturum).
+    pub merged_multiline: u64,
+
+    // Oyuna duyarlı çeviri
+    pub profile: String,
+    pub provider: String,
+    pub glossary_terms: usize,
+    /// Sözlük terimi geçen metin sayısı ve modele gitmeden karşılanan metin (düzeltme/sözlük/menü).
+    pub glossary_hits: u64,
+    pub fixed_hits: u64,
+    pub normalized_hits: u64,
+    pub session_hits: u64,
+    pub memory_entries: usize,
+    pub session_entries: usize,
+    pub context_lines: usize,
+    pub context_resets: u64,
+    /// Devre kesici: "kapalı" / "açık" / "deneniyor".
+    pub breaker: String,
+    pub breaker_opens: u64,
+    pub probes: u64,
+    /// Son çeviri hatasının türü ve kullanıcı müdahalesi gerekip gerekmediği.
+    pub error_class: Option<String>,
+    pub needs_user: bool,
+    pub requests: u64,
+
+    // Kendiliğinden toparlanma
+    pub system_state: SystemState,
+    pub recovery: RecoveryStatus,
+    /// Son uyku/uyanmadan bu yana (sn).
+    pub last_wake_ago_s: Option<f64>,
+    pub wakes: u64,
 }
 
 impl Diagnostics {
@@ -175,7 +221,17 @@ impl Diagnostics {
             None => Level::Idle,
         };
 
-        let (stage, summary) = if self.waiting_for_window {
+        let recovering = matches!(self.recovery.state, SystemState::Recovering | SystemState::Verifying);
+        let (stage, summary) = if self.recovery.state == SystemState::Unavailable {
+            let reason = self.recovery.reason.clone().unwrap_or_else(|| "yanıt yok".into());
+            (Stage::Unavailable, format!("Ekran okuma {} kez yenilendi ama düzelmedi ({reason}). Remote Play'i ve Ekran Kaydı iznini kontrol edin; seyrek aralıklarla denenmeye devam ediliyor.", self.recovery.attempts))
+        } else if self.translating_enabled && self.needs_user && self.translation == Level::Bad {
+            let reason = self.last_translation_error.clone().unwrap_or_default();
+            (Stage::Unavailable, format!("Çeviri servisi kullanıcı müdahalesi bekliyor ({reason}). Anahtarı/kotayı kontrol edin; arada bir yeniden denenir."))
+        } else if recovering {
+            let reason = self.recovery.reason.clone().unwrap_or_else(|| "okuyucu yenileniyor".into());
+            (Stage::Recovering, format!("Toparlanıyor: {reason}. Okuyucu yeniden kuruldu, doğrulanıyor."))
+        } else if self.waiting_for_window {
             (Stage::WindowMissing, "Remote Play penceresi ekranda yok; açılması bekleniyor.".to_string())
         } else if self.capture == Level::Bad {
             let reason = self.last_read_error.clone().unwrap_or_else(|| "yanıt yok".into());
@@ -205,6 +261,22 @@ impl Diagnostics {
         };
         self.stage = stage;
         self.summary = summary;
+        self.system_state = self.overall_state();
+    }
+
+    /// Tek cümlelik genel durum: ekran okumanın durumu, çeviri sorunluysa "sorunlu".
+    fn overall_state(&self) -> SystemState {
+        let reading = self.recovery.state;
+        if self.stage == Stage::Unavailable {
+            return SystemState::Unavailable;
+        }
+        if reading == SystemState::Running && (self.translation == Level::Bad || self.output == Level::Bad || self.capture == Level::Bad || self.ocr == Level::Bad) {
+            return SystemState::Degraded;
+        }
+        if self.waiting_for_window {
+            return SystemState::WaitingForSource;
+        }
+        reading
     }
 }
 
@@ -274,6 +346,29 @@ mod tests {
         assert_eq!(stage(Diagnostics { worker: WORKER_STUCK.into(), ..healthy() }), Stage::TranslationDown);
         // 9. Çeviri başarılı ama TV güncellenmiyor.
         assert_eq!(stage(Diagnostics { tv_ok: Some(false), ..healthy() }), Stage::OutputDown);
+    }
+
+    #[test]
+    fn toparlanma_ve_kullanici_mudahalesi_asamalari() {
+        let recovering = Diagnostics { recovery: RecoveryStatus { state: SystemState::Verifying, reason: Some("Ekran okuma 20 sn'dir çalışmıyor".into()), ..RecoveryStatus::default() }, ..healthy() };
+        let mut d = recovering.clone();
+        d.summarize();
+        assert_eq!(d.stage, Stage::Recovering);
+        assert!(d.summary.contains("20 sn"), "{}", d.summary);
+
+        let mut d = Diagnostics { recovery: RecoveryStatus { state: SystemState::Unavailable, attempts: 5, ..RecoveryStatus::default() }, ..healthy() };
+        d.summarize();
+        assert_eq!((d.stage, d.system_state), (Stage::Unavailable, SystemState::Unavailable));
+
+        let mut d = Diagnostics { needs_user: true, backoff_s: 300.0, queue: 1, last_translation_error: Some("API anahtarı geçersiz (403)".into()), ..healthy() };
+        d.summarize();
+        assert_eq!(d.stage, Stage::Unavailable);
+        assert!(d.summary.contains("403"));
+
+        // Okuma çalışıyor ama çeviri düşük: genel durum "sorunlu".
+        let mut d = Diagnostics { queue: 1, backoff_s: 4.0, recovery: RecoveryStatus { state: SystemState::Running, ..RecoveryStatus::default() }, ..healthy() };
+        d.summarize();
+        assert_eq!((d.stage, d.system_state), (Stage::TranslationDown, SystemState::Degraded));
     }
 
     #[test]

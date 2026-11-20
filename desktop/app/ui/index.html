@@ -133,6 +133,23 @@
             <textarea id="protected-terms" rows="3" spellcheck="false" placeholder="Her satıra bir ad: oyun, karakter, yer&#10;ör. It Takes Two"></textarea>
             <small class="hint">PlayStation, PS5, DualSense gibi adlar zaten çevrilmez.</small>
           </label>
+          <fieldset class="field">
+            <legend>Oyun profili (isteğe bağlı)</legend>
+            <label class="field">
+              <span>Oyun</span>
+              <input id="profile-name" type="text" list="profile-list" autocomplete="off" spellcheck="false" placeholder="Boş: profil yok · ör. Elden Ring">
+              <datalist id="profile-list"></datalist>
+            </label>
+            <label class="field">
+              <span>Tür</span>
+              <input id="profile-genre" type="text" autocomplete="off" spellcheck="false" placeholder="ör. aksiyon RPG (çeviriye ipucu olur)">
+            </label>
+            <label class="field">
+              <span>Oyun sözlüğü</span>
+              <textarea id="profile-glossary" rows="4" spellcheck="false" placeholder="Her satıra: İngilizce = Türkçe&#10;Charge = Hücum&#10;Site of Grace = Lütuf Noktası&#10;Yalnızca ad yazılırsa çevrilmez: Melina"></textarea>
+              <small class="hint">Bu oyuna özeldir; genel terimlerden (Quest → Görev gibi) önce gelir. Değişince eski çeviriler kendiliğinden yenilenir.</small>
+            </label>
+          </fieldset>
           <label class="field" id="window-field">
             <span>Pencere</span>
             <input id="window" type="text" placeholder="Boş bırakın: PS Remote Play" autocomplete="off" spellcheck="false">

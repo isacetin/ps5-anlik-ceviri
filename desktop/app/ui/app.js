@@ -191,10 +191,20 @@ function renderKey(hasKey) {
   badge.classList.toggle("ok", hasKey);
 }
 
+function renderProfiles(status) {
+  const list = $("profile-list");
+  list.replaceChildren(...(status.profiles ?? []).map((p) => Object.assign(document.createElement("option"), { value: p.name })));
+  const selected = (status.profiles ?? []).find((p) => p.id === status.settings.profile);
+  $("profile-name").value = selected ? selected.name : "";
+  $("profile-genre").value = selected ? status.profileGenre : "";
+  $("profile-glossary").value = selected ? status.profileGlossary : "";
+}
+
 async function refresh() {
   const status = await invoke("status");
   gameSource = status.gameSource;
   renderSettings(status.settings);
+  renderProfiles(status);
   renderKey(status.hasDeeplKey);
   renderModel(status.hasLocalModel, status.localModelMb);
   setState(status.running ? "running" : "stopped");
@@ -278,7 +288,7 @@ setInterval(() => {
 function renderDiagnostics(d) {
   lastHealthAt = Date.now();
   $("diag-summary").textContent = d.summary;
-  const worst = ["bad", "warn"].find((level) => [d.capture, d.ocr, d.translation, d.output].includes(level));
+  const worst = d.stage === "unavailable" ? "bad" : ["bad", "warn"].find((level) => [d.capture, d.ocr, d.translation, d.output].includes(level)) ?? (d.stage === "recovering" ? "warn" : undefined);
   const badge = $("diag-badge");
   badge.textContent = worst === "bad" ? "Sorun var" : worst === "warn" ? "Uyarı" : "Sağlıklı";
   badge.className = `badge ${worst ?? "ok"}`;
@@ -315,6 +325,29 @@ function renderDiagnostics(d) {
     ["Bellek", d.memoryMb == null ? "—" : `${Math.round(d.memoryMb)} MB`],
     ["Çalışma süresi", `${Math.floor(d.uptimeS / 60)} dk ${Math.floor(d.uptimeS % 60)} sn`],
   ];
+  const STATE_TEXT = { initializing: "başlıyor", waitingForSource: "pencere bekleniyor", running: "çalışıyor", degraded: "sorunlu", recovering: "toparlanıyor", verifying: "doğrulanıyor", unavailable: "kullanılamıyor" };
+  const r = d.recovery ?? {};
+  metrics.push(
+    ["Sistem durumu", `${STATE_TEXT[d.systemState] ?? "—"}${r.nextAttemptIn != null ? ` · sonraki deneme ${Math.ceil(r.nextAttemptIn)} sn` : ""}`],
+    ["Okuyucu yenileme / doğrulanan", `${r.restarts ?? 0} / ${r.recoveries ?? 0}${r.lastRecoveredAgo != null ? ` · son ${seconds(r.lastRecoveredAgo)}` : ""}`],
+  );
+  if (r.reason && d.systemState !== "running") metrics.push(["Toparlanma sebebi", r.reason]);
+  if (d.wakes) metrics.push(["Uykudan uyanma", `${d.wakes} · son ${seconds(d.lastWakeAgoS)}`]);
+  const c = d.activeCandidate;
+  if (c) {
+    metrics.push(["Etkin altyazı", `${d.candidateStage} · ${Math.round(c.stability * 100)}% oturdu · güven ${Math.round(c.confidence * 100)}% · ${c.ageS.toFixed(1)} sn${c.growing ? " · büyüyor" : ""}`]);
+  }
+  const s = d.subtitle ?? {};
+  metrics.push(["Altyazı aday / kabul / düşen", `${s.candidates ?? 0} / ${s.accepted ?? 0} / ${s.dropped ?? 0} · kopya ${s.duplicates ?? 0} · büyüme ${s.growths ?? 0}`]);
+  if (d.translatingEnabled) {
+    metrics.push(
+      ["Çeviri motoru / profil", `${d.provider || "—"} · ${d.profile || "profil yok"} · sözlükte ${d.glossaryTerms} terim`],
+      ["Sözlük / hazır karşılık / normalize bellek", `${d.glossaryHits} / ${d.fixedHits} / ${d.normalizedHits}`],
+      ["Bellek (kalıcı / oturum) · bağlam", `${d.memoryEntries} / ${d.sessionEntries} · ${d.contextLines} replik`],
+      ["Devre kesici", `${d.breaker || "—"} · açılma ${d.breakerOpens} · deneme ${d.probes} · istek ${d.requests}`],
+    );
+    if (d.errorClass) metrics.push(["Son hata türü", `${d.errorClass}${d.needsUser ? " · kullanıcı müdahalesi gerekli" : ""}`]);
+  }
   if (d.lastReadError) metrics.push(["Son okuma hatası", d.lastReadError]);
   if (d.lastTranslationError) metrics.push(["Son çeviri hatası", d.lastTranslationError]);
   $("diag-metrics").replaceChildren(
@@ -440,7 +473,9 @@ $("settings").addEventListener("submit", async (event) => {
   const settings = readSettings();
   try {
     await invoke("save_settings", { settings });
-    renderSettings(settings);
+    // Profil ayrı dosyada; kaydedince seçili profil ayarlara yazılır.
+    await invoke("save_profile", { name: $("profile-name").value.trim(), genre: $("profile-genre").value.trim(), glossary: $("profile-glossary").value });
+    await refresh();
     note.className = "note ok";
     note.textContent = "Kaydedildi";
   } catch (error) {

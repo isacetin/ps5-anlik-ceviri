@@ -23,7 +23,11 @@ const status = {
     window: params.has("pc") ? "Hollow.exe" : "",
     regions: params.has("pc") ? { "hollow.exe": { x: 0.1, y: 0.72, width: 0.8, height: 0.22 } } : {},
     protectedTerms: ["It Takes Two", "May", "Cody"],
+    profile: "elden-ring",
   },
+  profiles: [{ id: "elden-ring", name: "Elden Ring" }, { id: "hades", name: "Hades" }],
+  profileGenre: "aksiyon RPG",
+  profileGlossary: "Site of Grace = Lütuf Noktası\nRune = Rün\nMelina",
 };
 const mockWindows = [
   { exe: "Hollow.exe", title: "Hollow Knight", width: 1920, height: 1080 },
@@ -38,6 +42,7 @@ window.__TAURI__ = {
         return { platform: windows ? "windows" : "macos", screenRecording: windows ? null : true, remotePlay: true, tvApkAvailable: true, hasDeeplKey: true, hasLocalModel: true, localModelMb: 241, setupDone: status.settings.setupDone, gameSource: windows };
       if (cmd === "list_windows") return new Promise((r) => setTimeout(() => r(mockWindows), 200));
       if (cmd === "save_settings" || cmd === "finish_setup") Object.assign(status.settings, args.settings);
+      if (cmd === "save_profile") Object.assign(status, { profileGenre: args.genre, profileGlossary: args.glossary });
       if (cmd === "current_region") return status.settings.regions[status.settings.window.toLowerCase()] ?? null;
       if (cmd === "set_region") {
         const key = status.settings.window.toLowerCase();
@@ -76,6 +81,12 @@ window.__TAURI__ = {
             cacheHits: 1840, translation: "ok", translatingEnabled: true, queue: 0, inFlight: 0, worker: "boşta", lastTranslationAgoS: 3.2,
             translationMs: 96, translationErrors: 2, timeouts: 1, rateLimited: 0, retries: 2, rejected: 1, backoffS: 0, lastTranslationError: null,
             output: "ok", tvOk: true, shown: 4, lastSendAgoS: 0.1, sendErrors: 0, roundMs: 171, latencyMs: 192, recoveries: 2, memoryMb: 212,
+            systemState: "running", recovery: { state: "running", restarts: 1, recoveries: 1, lastRecoveredAgo: 1400, reason: "Ekran okuma 21 sn'dir çalışmıyor", nextAttemptIn: null },
+            wakes: 1, lastWakeAgoS: 1800, candidateStage: "gösteriliyor",
+            activeCandidate: { id: "b12", state: "ready", ageS: 2.4, frames: 11, stability: 1, requiredS: 0.3, confidence: 0.93, growing: false, similarity: 0.4 },
+            subtitle: { candidates: 412, accepted: 377, dropped: 35, duplicates: 920, growths: 64, continued: 12, fastAccepts: 140 },
+            provider: "DeepL", profile: "Elden Ring", glossaryTerms: 14, glossaryHits: 37, fixedHits: 210, normalizedHits: 44,
+            memoryEntries: 1840, sessionEntries: 23, contextLines: 3, breaker: "kapalı", breakerOpens: 0, probes: 0, requests: 512, errorClass: "zaman aşımı", needsUser: false,
           },
         }, 700);
         emit({ type: "log", message: "Kare akışı takıldı; yeniden başlatıldı." }, 750);

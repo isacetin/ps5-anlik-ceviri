@@ -53,7 +53,7 @@ fn main() -> Result<(), String> {
 
     if !only_local {
         let deepl = DeepLClient::new(storage::deepl_key().ok_or("DeepL anahtarı yok")?);
-        measure("DeepL", |text| deepl.translate(&[text.to_string()]).map(|mut t| t.remove(0)).map_err(|e| e.to_string()), 1)?;
+        measure("DeepL", |text| deepl.translate(&[text.to_string()], "").map(|mut t| t.remove(0)).map_err(|e| e.to_string()), 1)?;
     }
     Ok(())
 }

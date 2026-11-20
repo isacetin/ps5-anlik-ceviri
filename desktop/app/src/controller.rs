@@ -8,7 +8,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use ceviri_core::context::ContextWindow;
 use ceviri_core::geometry::clamp_region;
+use ceviri_core::profile::{self, Correction, CorrectionKind, GameProfile};
 use ceviri_core::{storage, Diagnostics, OverlayBlock, Rect, ScreenReader, SharedRegion, Terms};
 use ceviri_engine::pipeline::Backend;
 use ceviri_engine::{discovery, translation, tv_client, Config, Event, Pipeline, TvClient};
@@ -92,6 +94,8 @@ pub struct Settings {
     pub focus: bool,
     /// Altyazı çevirisi orijinal yazının üstüne değil altına konur.
     pub subtitle_below: bool,
+    /// Seçili oyun profili (kimlik); boşsa profil yok.
+    pub profile: String,
     /// Ayar dosyasının biçim sürümü; eski dosyaları yeni varsayılanlara taşımak için.
     pub settings_version: u32,
 }
@@ -111,6 +115,7 @@ impl Default for Settings {
             setup_done: false,
             focus: true,
             subtitle_below: true,
+            profile: String::new(),
             settings_version: Settings::VERSION,
         }
     }
@@ -199,11 +204,22 @@ pub type ReaderFactory = Arc<dyn Fn(&Settings, &SharedRegion) -> Result<Box<dyn 
 /// yoksa hata.
 pub type BackendFactory = Arc<dyn Fn(Engine) -> Result<Backend, String> + Send + Sync>;
 
-/// Çeviri önbellek dosyaları; yerel modelinkiler DeepL'inkilere karışmaz.
+/// Çeviri önbellek dosyaları (yerel modelinkiler DeepL'inkilere karışmaz), oyun profilleri ve
+/// kullanıcının genel sözlüğü.
 #[derive(Clone, Debug, Default)]
 pub struct Caches {
     pub deepl: Option<PathBuf>,
     pub local: Option<PathBuf>,
+    pub profiles: Option<PathBuf>,
+    pub user_glossary: Option<PathBuf>,
+}
+
+/// Arayüzdeki profil listesi.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProfileSummary {
+    pub id: String,
+    pub name: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -217,6 +233,10 @@ pub struct Status {
     pub local_model_mb: u64,
     /// Bu bilgisayarda oynanan oyun okunabilir mi (yalnızca Windows).
     pub game_source: bool,
+    pub profiles: Vec<ProfileSummary>,
+    /// Seçili profilin türü ve sözlüğü ("İngilizce = Türkçe" satırları).
+    pub profile_genre: String,
+    pub profile_glossary: String,
 }
 
 pub struct Controller {
@@ -251,9 +271,14 @@ impl Controller {
     }
 
     pub fn status(&self) -> Status {
+        let settings = self.inner.settings.lock().unwrap().clone();
+        let selected = self.inner.load_profile(&settings.profile).ok().flatten();
         Status {
+            profiles: self.inner.caches.profiles.as_deref().map(profile::list).unwrap_or_default().into_iter().map(|(id, name)| ProfileSummary { id, name }).collect(),
+            profile_genre: selected.as_ref().map(|p| p.genre.clone()).unwrap_or_default(),
+            profile_glossary: selected.as_ref().map(|p| profile::glossary_lines(&p.glossary)).unwrap_or_default(),
             running: self.inner.running.lock().unwrap().is_some(),
-            settings: self.inner.settings.lock().unwrap().clone(),
+            settings,
             has_deepl_key: storage::deepl_key().is_some(),
             has_local_model: storage::local_model_dir().is_some_and(|dir| ceviri_opus::model::is_installed(&dir)),
             local_model_mb: ceviri_opus::model::total_size().div_ceil(1_000_000),
@@ -291,6 +316,43 @@ impl Controller {
         };
         *self.inner.region.lock().unwrap() = region;
         Ok(settings.clone())
+    }
+
+    /// Oyun profilini oluşturur ya da günceller (ad, tür, sözlük satırları) ve seçer. Düzeltmeler ve
+    /// diğer alanlar korunur. Boş ad: profil seçimi kaldırılır. Kaydedilecek güncel ayarları döner.
+    pub fn save_profile(&self, name: &str, genre: &str, glossary: &str) -> Result<Settings, String> {
+        if self.inner.running.lock().unwrap().is_some() {
+            return Err("Profili değiştirmek için önce durdurun.".into());
+        }
+        let mut settings = self.inner.settings.lock().unwrap();
+        if name.trim().is_empty() {
+            settings.profile.clear();
+            return Ok(settings.clone());
+        }
+        let dir = self.inner.caches.profiles.clone().ok_or("uygulama klasörü bulunamadı")?;
+        let id = profile::slug(name);
+        if id.is_empty() {
+            return Err("Profil adında en az bir harf ya da rakam olmalı.".into());
+        }
+        let mut game = profile::load(&dir, &id).unwrap_or_else(|_| GameProfile::new(name));
+        game.name = name.trim().to_string();
+        game.genre = genre.trim().to_string();
+        game.glossary = profile::parse_glossary_lines(glossary).map_err(|e| format!("Sözlük: {e}"))?;
+        profile::save(&dir, &game)?;
+        settings.profile = game.id;
+        Ok(settings.clone())
+    }
+
+    /// Seçili profile kullanıcı düzeltmesi ekler (yalnızca o oyuna uygulanır). `term`: tek terim
+    /// (sözlüğe girer), değilse tam metin.
+    pub fn add_correction(&self, source: &str, translation: &str, term: bool) -> Result<(), String> {
+        let settings = self.inner.settings.lock().unwrap().clone();
+        let dir = self.inner.caches.profiles.clone().ok_or("uygulama klasörü bulunamadı")?;
+        let mut game = self.inner.load_profile(&settings.profile)?.ok_or("Düzeltme için önce bir oyun profili seçin.")?;
+        let kind = if term { CorrectionKind::Term } else { CorrectionKind::Text };
+        let created = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+        game.add_correction(Correction { kind, source: source.trim().into(), translation: translation.trim().into(), created })?;
+        profile::save(&dir, &game)
     }
 
     /// İş hattını kendi thread'inde başlatır ve hemen döner; ilerleme olaylarla bildirilir.
@@ -331,9 +393,35 @@ impl Controller {
 }
 
 impl Inner {
+    /// Seçili profil; seçim yoksa `None`, dosya okunamıyorsa hata.
+    fn load_profile(&self, id: &str) -> Result<Option<GameProfile>, String> {
+        if id.trim().is_empty() {
+            return Ok(None);
+        }
+        let dir = self.caches.profiles.as_deref().ok_or("uygulama klasörü bulunamadı")?;
+        profile::load(dir, id).map(Some)
+    }
+
     fn run(&self, stop: Arc<AtomicBool>) -> Result<(), String> {
-        let settings = self.settings.lock().unwrap().clone();
+        let mut settings = self.settings.lock().unwrap().clone();
         let state = |state: &str, detail: &str| (self.emit)(UiEvent::State { state: state.into(), detail: detail.into() });
+        // Profil okunamazsa çeviri durmaz: profilsiz devam edilir, sorun bildirilir.
+        let game = self.load_profile(&settings.profile).unwrap_or_else(|error| {
+            (self.emit)(UiEvent::Error { message: format!("Oyun profili kullanılamıyor ({error}); profilsiz devam ediliyor.") });
+            None
+        });
+        if let Some(game) = &game {
+            if let Some(fps) = game.ocr.fps {
+                settings.fps = fps;
+            }
+            settings.focus = game.subtitle.focus.unwrap_or(settings.focus);
+            settings.subtitle_below = game.subtitle.below.unwrap_or(settings.subtitle_below);
+            match game.provider.as_str() {
+                "deepl" if storage::deepl_key().is_some() => settings.engine = Engine::Deepl,
+                "local" => settings.engine = Engine::Local,
+                _ => {}
+            }
+        }
 
         let output = settings.effective_output();
         if settings.source == Source::PcGame && settings.region_key().is_empty() {
@@ -356,9 +444,31 @@ impl Inner {
             return Ok(());
         }
 
-        let mut config = Config { fps: settings.fps, terms: Terms::new(&settings.protected_terms), focus: settings.focus, below: settings.subtitle_below, ..Config::default() };
+        let user_glossary = self.caches.user_glossary.as_deref().map(profile::load_user_glossary).unwrap_or_default();
+        let mut config = Config {
+            fps: settings.fps,
+            terms: Terms::new(&settings.protected_terms),
+            focus: settings.focus,
+            below: settings.subtitle_below,
+            provider: settings.engine.label().to_string(),
+            user_glossary,
+            ..Config::default()
+        };
         // Yerel model işlemciyi kullanır, tek işçi yeter; DeepL ağ beklediği için iki istek aynı anda gidebilir.
         config.translation.workers = if settings.engine == Engine::Deepl { 2 } else { 1 };
+        // Yerel model bir cümleyi 0,2 sn'nin altında çevirir; 4 sn süren çağrı takılmıştır. (DeepL'in
+        // kendi 8 sn ağ süre sınırı var, orada 20 sn kalır.)
+        if settings.engine == Engine::Local {
+            config.translation.stuck_after = 4.0;
+            // Yerel model ücretsiz: tamamlanmış görünen altyazının çevirisi oturmadan başlatılır.
+            config.prefetch = true;
+        }
+        // Bağlamı (az önce geçen konuşma, oyun ipucu) yalnızca DeepL kullanır.
+        let context = game.as_ref().map(|g| g.context.clone()).unwrap_or_default();
+        if settings.engine == Engine::Deepl && context.enabled {
+            config.translation.context = Some(ContextWindow::new(context.max_lines, context.max_chars));
+        }
+        config.profile = game;
         if settings.translate {
             if settings.engine == Engine::Local {
                 state("starting", "Çeviri modeli yükleniyor…");
@@ -537,7 +647,7 @@ mod tests {
         let log = asked.clone();
         let backend: BackendFactory = Arc::new(move |engine| {
             log.lock().unwrap().push(engine);
-            let translate: Backend = Arc::new(|texts: &[String]| Ok(texts.iter().map(|t| format!("TR({t})")).collect()));
+            let translate: Backend = Arc::new(|texts: &[String], _: &str| Ok(texts.iter().map(|t| format!("TR({t})")).collect()));
             Ok(translate)
         });
         let settings = Settings { tv_address: address, translate: true, engine: Engine::Deepl, fps: 20.0, ..Settings::default() };
