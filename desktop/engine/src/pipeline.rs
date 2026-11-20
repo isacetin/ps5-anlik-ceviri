@@ -1748,32 +1748,35 @@ mod tests {
     fn duraklayarak_beliren_altyazinin_yarimi_cevrilmez() {
         let (backend, log) = logging(Duration::ZERO);
         let config = Config { backend: Some(backend), ..fast() };
-        let reader = script(|round| Ok(reading(vec![sentence(typing(round), 0.8)])));
+        // Yazım gerçek saate göre ilerler: sabitleyici de saati kullanır. Tur sayısına bağlı olsaydı
+        // yavaş makinede (CI) duraklama uzar ve yarım cümle oturmuş sayılırdı.
+        let started = Instant::now();
+        let reader = script(move |_| Ok(reading(vec![sentence(typing(started.elapsed()), 0.8)])));
 
         run_events(Pipeline::new(reader, None, config), Duration::from_secs(5), |e| shown_text(e, "TR(The ancient kingdom, they say, was destroyed by war.)"));
 
         assert_eq!(asked(&log), ["The ancient kingdom, they say, was destroyed by war."]);
     }
 
-    /// 20 tur/sn: her 2 turda bir kelime, virgüllerde 9 tur (0,45 sn) duraklama.
-    fn typing(round: u64) -> &'static str {
+    /// Her 0,1 sn'de bir kelime, virgüllerde 0,45 sn duraklama (20 tur/sn'de 2 ve 9 tur).
+    fn typing(elapsed: Duration) -> &'static str {
         const STEPS: [(&str, u64); 9] = [
-            ("The", 2),
-            ("The ancient", 2),
-            ("The ancient kingdom,", 9),
-            ("The ancient kingdom, they", 2),
-            ("The ancient kingdom, they say,", 9),
-            ("The ancient kingdom, they say, was", 2),
-            ("The ancient kingdom, they say, was destroyed", 2),
-            ("The ancient kingdom, they say, was destroyed by", 2),
+            ("The", 100),
+            ("The ancient", 100),
+            ("The ancient kingdom,", 450),
+            ("The ancient kingdom, they", 100),
+            ("The ancient kingdom, they say,", 450),
+            ("The ancient kingdom, they say, was", 100),
+            ("The ancient kingdom, they say, was destroyed", 100),
+            ("The ancient kingdom, they say, was destroyed by", 100),
             ("The ancient kingdom, they say, was destroyed by war.", u64::MAX),
         ];
-        let mut left = round.saturating_sub(1);
-        for (text, rounds) in STEPS {
-            if left < rounds {
+        let mut left = elapsed.as_millis() as u64;
+        for (text, millis) in STEPS {
+            if left < millis {
                 return text;
             }
-            left -= rounds;
+            left -= millis;
         }
         STEPS[8].0
     }
