@@ -140,4 +140,55 @@ class OverlayStateTest {
 
         assertEquals(listOf("demo-1"), store.blocks.value.map { it.id })
     }
+
+    private fun TestScope.clockedStore() = OverlayStore(backgroundScope, clock = { testScheduler.currentTime })
+
+    private fun line(text: String) = remote.copy(id = "s", text = text, kind = SUBTITLE_KIND)
+
+    @Test
+    fun `websocket altyazilari yigini besler`() = runTest {
+        val store = clockedStore()
+        store.applyRemote(listOf(line("Bir.")))
+        advance(500)
+        store.applyRemote(listOf(line("İki.")))
+
+        assertEquals(listOf("Bir."), store.subtitleStack.snapshot(testScheduler.currentTime).lines.map { it.text })
+    }
+
+    @Test
+    fun `temizle ve baglanti kopmasi yigini bosaltir`() = runTest {
+        val store = clockedStore()
+        store.applyRemote(listOf(line("Bir.")))
+        advance(500)
+        store.applyRemote(listOf(line("İki.")))
+        store.clearAll()
+        assertTrue(store.subtitleStack.snapshot(testScheduler.currentTime).lines.isEmpty())
+
+        store.applyRemote(listOf(line("Üç.")))
+        advance(500)
+        store.applyRemote(listOf(line("Dört.")))
+        assertEquals(1, store.subtitleStack.snapshot(testScheduler.currentTime).lines.size)
+        // Mesaj gelmezse (bağlantı koptu) bloklarla birlikte yığın da temizlenir; yeniden bağlanınca
+        // eski satır geri gelmez.
+        advance(3_000)
+        assertTrue(store.blocks.value.isEmpty())
+        assertTrue(store.subtitleStack.snapshot(testScheduler.currentTime).lines.isEmpty())
+        store.applyRemote(listOf(line("Beş.")))
+        assertTrue(store.subtitleStack.snapshot(testScheduler.currentTime).lines.isEmpty())
+    }
+
+    @Test
+    fun `yeni baglanti onceki baglantinin yiginini bosaltir`() = runTest {
+        val store = clockedStore()
+        store.applyRemote(listOf(line("Bir.")))
+        advance(500)
+        store.applyRemote(listOf(line("İki.")))
+
+        store.onNewConnection()
+        store.applyRemote(listOf(line("Üç.")))
+
+        assertTrue(store.subtitleStack.snapshot(testScheduler.currentTime).lines.isEmpty())
+        // Ekrandaki blok yeni mesajla değişir, bağlantı açılması onu silmez.
+        assertEquals(listOf("Üç."), store.blocks.value.map { it.text })
+    }
 }

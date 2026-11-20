@@ -30,7 +30,7 @@ use ceviri_core::recovery::{self, Component, RecoveryCoordinator, SleepDetector}
 use ceviri_core::resolve::{Resolution, Resolver};
 use ceviri_core::stabilizer::CandidateState;
 use ceviri_core::term_glossary::GlossaryEntry;
-use ceviri_core::{block_merger, language, ocr_text, terms, CandidateInfo, Diagnostics, OverlayBlock, ReadError, Reading, Rect, ScreenReader, StableBlock, Stabilizer, Terms, TextLine, TranslationError, Wanted};
+use ceviri_core::{block_merger, language, ocr_text, post_edit, speaker, terms, CandidateInfo, Diagnostics, OverlayBlock, ReadError, Reading, Rect, ScreenReader, StableBlock, Stabilizer, Terms, TextLine, TranslationError, Wanted};
 
 use crate::sysinfo;
 pub use crate::translation::Backend;
@@ -373,6 +373,8 @@ struct RunState {
     lines: usize,
     merged: usize,
     multiline: u64,
+    /// Son turda kalitesi çok düşük olduğu için atılan OCR satırları.
+    noisy_lines: usize,
     /// Sabitlenmiş blok sayısı (ayıklamadan önce) ve ayıklananlar (odak dışı, Türkçe, ad, sayı).
     stable_total: usize,
     filtered: usize,
@@ -449,6 +451,7 @@ impl RunState {
             lines: 0,
             merged: 0,
             multiline: 0,
+            noisy_lines: 0,
             stable_total: 0,
             filtered: 0,
             shown: 0,
@@ -615,18 +618,29 @@ impl RunState {
 
     /// OCR satırlarını temizler, birleştirir, sabitler ve türüne göre ayıklar.
     fn process(&mut self, reading: &Reading, config: &Config) -> Vec<block_merger::MergedBlock> {
+        // PC oyunlarında alan 16:9 olmayabilir (21:9 monitör, seçilen altyazı bandı).
+        let aspect = reading.video_width as f64 / reading.video_height.max(1) as f64;
+        let options = block_merger::Options { aspect, ..Default::default() };
+        let mut rejected = 0;
         let lines: Vec<TextLine> = reading
             .lines
             .iter()
             .filter_map(|line| {
-                let text = ocr_text::clean(&line.text);
-                (!text.is_empty()).then(|| TextLine { text, ..line.clone() })
+                let quality = ocr_text::assess(&ocr_text::clean(&line.text));
+                if quality.text.is_empty() {
+                    return None;
+                }
+                if ocr_text::reject(&quality, line.confidence) {
+                    rejected += 1;
+                    return None;
+                }
+                // Bozuk okumanın güveni düşer: sabitleyici onu bir kare daha bekletir.
+                let confidence = ocr_text::adjusted_confidence(line.confidence, quality.score, options.min_confidence);
+                Some(TextLine { text: quality.text, confidence, ..line.clone() })
             })
             .collect();
+        self.noisy_lines = rejected;
         self.lines = lines.len();
-        // PC oyunlarında alan 16:9 olmayabilir (21:9 monitör, seçilen altyazı bandı).
-        let aspect = reading.video_width as f64 / reading.video_height.max(1) as f64;
-        let options = block_merger::Options { aspect, ..Default::default() };
         let merged = block_merger::merge_with(&lines, &options);
         self.merged = merged.len();
         self.multiline = merged.iter().filter(|b| b.line_count > 1).count() as u64;
@@ -747,6 +761,7 @@ impl RunState {
             candidate_stage,
             subtitle: self.stabilizer.stats().clone(),
             merged_multiline: self.multiline,
+            ocr_rejected: self.noisy_lines,
             profile: self.resolver.profile_name().to_string(),
             provider: self.provider.clone(),
             glossary_terms: self.resolver.glossary_len(),
@@ -869,7 +884,7 @@ fn compose(config: &Config, scene: &mut SceneView<'_>, service: Option<&Translat
                     *counters.fixed_hits += 1;
                 }
             }
-            Resolution::Model { key, glossary_hits } => {
+            Resolution::Model { key, glossary_hits, .. } => {
                 if *glossary_hits > 0 && counters.seen_glossary.len() < MAX_RESOLVED && counters.seen_glossary.insert(key.clone()) {
                     *counters.glossary_hits += 1;
                 }
@@ -896,8 +911,8 @@ fn compose(config: &Config, scene: &mut SceneView<'_>, service: Option<&Translat
     for (block, decision) in english.iter().zip(&decisions) {
         let text = match decision {
             Resolution::Ready { text, .. } => text.clone(),
-            Resolution::Model { key, .. } => match found.get(key) {
-                Some(translated) => terms::unprotect(translated),
+            Resolution::Model { key, speaker, .. } => match found.get(key) {
+                Some(translated) => display_text(key, translated, speaker.as_deref()),
                 None => {
                     scene.pending.insert(block.id.clone());
                     continue;
@@ -905,15 +920,33 @@ fn compose(config: &Config, scene: &mut SceneView<'_>, service: Option<&Translat
             },
         };
         if !text.trim().is_empty() {
-            blocks.push(overlay_block(block, &text, config.below && scene.below.contains(&block.id)));
+            let mut shown = overlay_block(block, &text, config.below && scene.below.contains(&block.id));
+            // Çeviri yazının altına konduysa (`below`) altyazı yığını kurulmaz: TV önceki satırları
+            // çeviri kutusunun üstüne dizer, orası orijinal İngilizce altyazının yeridir.
+            let placed_below = config.below && scene.below.contains(&block.id);
+            if !placed_below && scene.categories.get(&block.id) == Some(&Category::Subtitle) {
+                shown.kind = Some(OverlayBlock::SUBTITLE.to_string());
+            }
+            blocks.push(shown);
         }
     }
     (blocks, filtered)
 }
 
+/// Modelin çevirisinden gösterilecek metin: işaretler açılır, Türkçe biçim düzeltmeleri yapılır
+/// (`post_edit`; yalnızca gösterimde, çeviri belleğine ham çeviri yazılır), konuşan adı (modele
+/// gitmedi) başa konur.
+fn display_text(key: &str, translated: &str, speaker: Option<&str>) -> String {
+    let text = post_edit::apply(&terms::unprotect(key), &terms::unprotect(translated));
+    match speaker {
+        Some(label) if !text.trim().is_empty() => speaker::join(label, &text),
+        _ => text,
+    }
+}
+
 fn overlay_block(block: &StableBlock, text: &str, below: bool) -> OverlayBlock {
     let b = if below { focus::beside(block.bbox, block.line_height) } else { block.bbox };
-    OverlayBlock { id: block.id.clone(), x: b.x, y: b.y, w: b.width, h: b.height, line_h: block.line_height, text: text.to_string() }
+    OverlayBlock { id: block.id.clone(), x: b.x, y: b.y, w: b.width, h: b.height, line_h: block.line_height, text: text.to_string(), kind: None }
 }
 #[cfg(test)]
 mod tests {
@@ -1164,6 +1197,45 @@ mod tests {
     }
 
     #[test]
+    fn konusan_adi_modele_gitmez_ceviride_basa_konur() {
+        let (address, messages) = fake_tv(usize::MAX);
+        let asked = Arc::new(Mutex::new(Vec::<String>::new()));
+        let log = asked.clone();
+        let backend: Backend = Arc::new(move |texts: &[String], _: &str| {
+            log.lock().unwrap().extend(texts.iter().cloned());
+            Ok(texts.iter().map(|t| format!("TR({t})")).collect())
+        });
+        let config = Config { backend: Some(backend), ..fast() };
+        let reader = FakeReader { lines: vec![sentence("ARTHUR: We need to go.", 0.85), sentence("Objective: Find Dutch.", 0.1)], missing: 0, calls: 0 };
+
+        let (received, _) = run_until(reader, config, &messages, address, |m| m.blocks.len() == 2);
+
+        let shown = received.iter().find(|m| m.blocks.len() == 2).expect("iki çeviri de gelmeli");
+        assert_eq!(texts(shown), ["TR(Objective: Find Dutch.)", "ARTHUR: TR(We need to go.)"]);
+        // Alt-ortadaki konuşma altyazı olarak işaretlenir (TV önceki satırı üstünde tutar); görev değil.
+        assert_eq!(shown.blocks[0].kind, None);
+        assert_eq!(shown.blocks[1].kind.as_deref(), Some(OverlayBlock::SUBTITLE));
+        let mut asked = asked.lock().unwrap().clone();
+        asked.sort();
+        assert_eq!(asked, ["Objective: Find Dutch.", "We need to go."]);
+    }
+
+    #[test]
+    fn ceviri_turkce_bicim_duzeltmesiyle_gosterilir() {
+        let (address, messages) = fake_tv(usize::MAX);
+        // Opus-MT gibi: noktalamadan önce boşluk bırakır, ünlemi noktaya çevirir.
+        let backend: Backend = Arc::new(|texts: &[String], _: &str| Ok(texts.iter().map(|_| "Kaçmamız lazım .".to_string()).collect()));
+        let config = Config { backend: Some(backend), ..fast() };
+        let reader = FakeReader { lines: vec![sentence("GERALT: We have to run!", 0.85)], missing: 0, calls: 0 };
+
+        let (received, events) = run_until(reader, config, &messages, address, |m| !m.blocks.is_empty());
+
+        let shown = received.iter().find(|m| !m.blocks.is_empty()).unwrap();
+        assert_eq!(texts(shown), ["GERALT: Kaçmamız lazım!"]);
+        assert!(events.contains(&Event::Shown(vec!["GERALT: Kaçmamız lazım!".into()])));
+    }
+
+    #[test]
     fn altyazi_cevirisi_yazinin_altina_konur() {
         let (address, messages) = fake_tv(usize::MAX);
         let config = Config { backend: Some(echo()), below: true, ..fast() };
@@ -1234,6 +1306,77 @@ mod tests {
 
     fn shown_text(event: &Event, wanted: &str) -> bool {
         matches!(event, Event::Shown(texts) if texts.iter().any(|t| t == wanted))
+    }
+
+    #[test]
+    fn ayni_cumle_farkli_konusanlarla_tek_istek_ve_dogru_etiket() {
+        let (backend, log) = logging(Duration::ZERO);
+        let config = Config { backend: Some(backend), ..fast() };
+        let reader = script(|_| Ok(reading(vec![sentence("ARTHUR: Go now.", 0.45), sentence("DUTCH: Go now.", 0.85)])));
+
+        let events = run_events(Pipeline::new(reader, None, config), Duration::from_secs(4), |e| shown_text(e, "ARTHUR: TR(Go now.)") && shown_text(e, "DUTCH: TR(Go now.)"));
+
+        assert!(events.iter().any(|e| shown_text(e, "ARTHUR: TR(Go now.)") && shown_text(e, "DUTCH: TR(Go now.)")), "iki etiket de kendi satırında görünmeli");
+        // Etiketsiz cümle tek kez sorulur; çeviri belleği iki satırda paylaşılır.
+        assert_eq!(asked(&log), ["Go now."]);
+    }
+
+    #[test]
+    fn cok_dusuk_kaliteli_okuma_atilir_ve_teshiste_sayilir() {
+        let garbage = TextLine { text: "CESAREiVJütt'h rnnk Gtt".into(), bbox: Rect::new(0.3, 0.3, 0.4, 0.04), confidence: 0.9 };
+        let reader = script(move |_| Ok(reading(vec![sentence("You shouldn't be here.", 0.8), garbage.clone()])));
+        let config = Config { backend: Some(echo()), ..fast() };
+
+        let events = run_events(Pipeline::new(reader, None, config), Duration::from_millis(1500), |_| false);
+
+        let health = events
+            .iter()
+            .rev()
+            .find_map(|e| match e {
+                Event::Health(d) => Some(d.clone()),
+                _ => None,
+            })
+            .expect("teşhis gelmeli");
+        // Son turun sayısıdır: aynı çöp satır her karede birikmez.
+        assert_eq!(health.ocr_rejected, 1);
+        assert_eq!(health.lines, 1);
+        assert!(events.iter().any(|e| shown_text(e, "TR(You shouldn't be here.)")));
+        assert!(!events.iter().any(|e| matches!(e, Event::Shown(t) if t.iter().any(|t| t.contains("Gtt")))));
+    }
+
+    #[test]
+    fn bicim_duzeltmesi_bellegi_ve_kullanici_duzeltmesini_degistirmez() {
+        use ceviri_core::profile::{Correction, CorrectionKind, GameProfile};
+        let dir = std::env::temp_dir().join(format!("ceviri-postedit-{}-{:?}", std::process::id(), thread::current().id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("translations.json");
+        let _ = std::fs::remove_file(&path);
+        let mut profile = GameProfile::new("Test RPG");
+        // Düzeltme kaynağın ünlemini taşımıyor: kullanıcının yazdığı gibi gösterilmeli.
+        profile.add_correction(Correction { kind: CorrectionKind::Text, source: "The door is locked!".into(), translation: "Kapı kilitli.".into(), created: 0 }).unwrap();
+        let backend: Backend = Arc::new(|texts: &[String], _: &str| Ok(texts.iter().map(|_| "Kaçmamız lazım .".to_string()).collect()));
+        let config = Config { backend: Some(backend), profile: Some(profile), cache_path: Some(path.clone()), ..fast() };
+        let reader = script(|_| Ok(reading(vec![sentence("The door is locked!", 0.3), sentence("We have to run!", 0.85)])));
+
+        let events = run_events(Pipeline::new(reader, None, config), Duration::from_secs(4), |e| shown_text(e, "Kaçmamız lazım!"));
+
+        assert!(events.iter().any(|e| shown_text(e, "Kaçmamız lazım!") && shown_text(e, "Kapı kilitli.")));
+        let cache = ceviri_core::storage::load_cache(&path);
+        assert!(cache.values().any(|v| v == "Kaçmamız lazım ."), "bellekte ham çeviri olmalı: {cache:?}");
+        assert!(!cache.values().any(|v| v == "Kaçmamız lazım!"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn alta_yazilan_altyazi_yigin_icin_isaretlenmez() {
+        let (address, messages) = fake_tv(usize::MAX);
+        let config = Config { backend: Some(echo()), below: true, ..fast() };
+        let reader = FakeReader { lines: vec![sentence("You shouldn't be here.", 0.7)], missing: 0, calls: 0 };
+
+        let (received, _) = run_until(reader, config, &messages, address, |m| !m.blocks.is_empty());
+
+        let block = &received.iter().find(|m| !m.blocks.is_empty()).unwrap().blocks[0];
+        assert_eq!(block.kind, None);
     }
 
     #[test]

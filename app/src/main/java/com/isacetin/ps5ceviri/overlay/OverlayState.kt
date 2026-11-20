@@ -1,5 +1,6 @@
 package com.isacetin.ps5ceviri.overlay
 
+import android.os.SystemClock
 import com.isacetin.ps5ceviri.network.Block
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -29,10 +30,17 @@ const val REMOTE_TIMEOUT_MILLIS = 3_000L
  * Activity, WebSocket server ve overlay arasındaki ortak state.
  * Demo blokları ve WebSocket blokları ayrı tutulur; overlay ikisinin birleşimini çizer.
  * Timeout yalnızca WebSocket bloklarına uygulanır; demo bloğu kaldırılana kadar kalır.
+ * WebSocket blokları [subtitleStack]'i de besler (önceki altyazı satırları); temizleme ve
+ * timeout yığını da boşaltır, bağlantı kopunca eski satırlar geri gelmez.
+ *
+ * [clock]: milisaniye saati. Uygulamada uyku süresini de sayan `SystemClock.elapsedRealtime`;
+ * TV uykudan uyanınca eski altyazılar süresi dolmuş sayılır.
  */
 class OverlayStore(
     private val scope: CoroutineScope,
     private val timeoutMillis: Long = REMOTE_TIMEOUT_MILLIS,
+    private val clock: () -> Long = { System.nanoTime() / 1_000_000 },
+    val subtitleStack: SubtitleStack = SubtitleStack(),
 ) {
     private var demoBlocks = emptyList<Block>()
     private var remoteBlocks = emptyList<Block>()
@@ -55,6 +63,7 @@ class OverlayStore(
         remoteGeneration++
         demoBlocks = emptyList()
         remoteBlocks = emptyList()
+        subtitleStack.reset()
     }
 
     /**
@@ -63,6 +72,7 @@ class OverlayStore(
      */
     fun applyRemote(blocks: List<Block>) = change {
         remoteBlocks = blocks
+        subtitleStack.update(blocks, clock())
         timeoutJob?.cancel()
         val generation = ++remoteGeneration
         timeoutJob = if (blocks.isEmpty()) {
@@ -70,10 +80,21 @@ class OverlayStore(
         } else {
             scope.launch {
                 delay(timeoutMillis)
-                change { if (remoteGeneration == generation) remoteBlocks = emptyList() }
+                change {
+                    if (remoteGeneration == generation) {
+                        remoteBlocks = emptyList()
+                        subtitleStack.reset()
+                    }
+                }
             }
         }
     }
+
+    /**
+     * Masaüstü yeniden bağlandı (yeni WebSocket oturumu): önceki bağlantının altyazı satırları yeni
+     * oturumun ilk satırının üstüne çıkmasın. Ekrandaki bloklara dokunulmaz; yeni mesaj onları değiştirir.
+     */
+    fun onNewConnection() = subtitleStack.reset()
 
     fun updateStatus(transform: (ServiceStatus) -> ServiceStatus) = _status.update(transform)
 
@@ -97,4 +118,4 @@ class OverlayStore(
 }
 
 /** Uygulama genelindeki tek örnek. */
-val OverlayState = OverlayStore(CoroutineScope(SupervisorJob() + Dispatchers.Default))
+val OverlayState = OverlayStore(CoroutineScope(SupervisorJob() + Dispatchers.Default), clock = SystemClock::elapsedRealtime)

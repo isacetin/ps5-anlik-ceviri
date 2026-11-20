@@ -4,7 +4,7 @@
 //! tekrarlanabilir girdilerle denenir.
 
 use ceviri_core::block_merger::{self, TextLine};
-use ceviri_core::{focus, glossary, language, ocr_text, opus_text, stabilizer, terms, translator, Rect, Stabilizer, Terms};
+use ceviri_core::{focus, glossary, language, ocr_text, opus_text, post_edit, speaker, stabilizer, terms, translator, Rect, Stabilizer, Terms};
 
 /// Bağımlılıksız, tekrarlanabilir sözde rastgele sayı üreteci (xorshift).
 struct Rng(u64);
@@ -30,6 +30,7 @@ const PIECES: &[&str] = &[
     "The", "door", "is", "locked", ".", "!", "?", "…", "'", "’", "\"", "|", "|'m", "I", "l", "1", "0", "O", " ", "  ", "\t", "\n", "<x>", "</x>", "<", ">",
     "&", "&amp;", "ZXQ0", "ZXQ1", "ZXQ10", "'da", "’te", "It Takes Two", "PlayStation", "PS5", "Los Santos", "ı", "İ", "ş", "ğ", "Ç", "é", "e\u{301}",
     "тар", "Ω", "😀", "\u{200B}", "\u{FEFF}", "\u{0}", "•", "-", "—", "2/5", "100%", "Resume", "x", "⊗", "...", "Avatar: Frontiers of Pand...",
+    "ARTHUR:", "：", ":", "23m", "l'm", "l’ll", "ou$3e", "CESAREiVJ", "Gtt", "?!", ",,", "..", " .", "Bekleyin!", "sana", "İzleyin", "Işıl", "12 : 40",
 ];
 
 fn random_text(rng: &mut Rng) -> String {
@@ -45,7 +46,9 @@ fn rastgele_ocr_metni_hicbir_adimda_panik_yapmaz() {
     for round in 0..20_000 {
         let lines: Vec<TextLine> = (0..rng.below(6))
             .map(|_| {
-                let text = ocr_text::clean(&random_text(&mut rng));
+                let quality = ocr_text::assess(&ocr_text::clean(&random_text(&mut rng)));
+                let _ = ocr_text::reject(&quality, rng.unit());
+                let text = quality.text;
                 let bbox = Rect::new(rng.unit(), rng.unit(), rng.unit() * 0.6, rng.unit() * 0.1);
                 TextLine { text, bbox, confidence: rng.unit() }
             })
@@ -63,7 +66,12 @@ fn rastgele_ocr_metni_hicbir_adimda_panik_yapmaz() {
             // Model çıktısı da rastgele olabilir (yer tutucu kaybolur, çoğalır, ek alır).
             let model = format!("{} {}", prepared.source, random_text(&mut rng));
             let finished = prepared.finish(&model).or_else(|| prepared.plain().finish(&model)).unwrap_or_default();
-            let _ = terms::unprotect(&finished);
+            let shown = terms::unprotect(&finished);
+            let _ = post_edit::apply(text, &shown);
+            let _ = post_edit::apply(&random_text(&mut rng), &random_text(&mut rng));
+            if let Some(line) = speaker::split(text, |label| terms.is_only_terms(label)) {
+                let _ = speaker::join(line.label, &shown);
+            }
             let _ = translator::is_valid_translation(&protected, &finished);
             let _ = focus::beside(block.bbox, block.line_height);
         }

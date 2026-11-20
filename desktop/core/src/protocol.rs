@@ -8,6 +8,11 @@ use serde::{Deserialize, Serialize};
 pub struct OverlayBlock {
     pub h: f64,
     pub id: String,
+    /// Yazının türü; şimdilik yalnızca `"subtitle"` (ekranın alt-ortasındaki konuşma). TV,
+    /// altyazının önceki satırlarını üstünde küçük ve soluk tutar. Yoksa alan gönderilmez: eski
+    /// TV uygulaması bilinmeyen alanı yok sayar, yeni TV alanı olmayan mesajda yığın kurmaz.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
     #[serde(rename = "lineH")]
     pub line_h: f64,
     pub text: String,
@@ -23,6 +28,11 @@ pub struct OverlayMessage {
     /// Bağlantı içinde artan sayı; TV daha küçüğünü yok sayar.
     pub seq: i64,
     pub v: i32,
+}
+
+impl OverlayBlock {
+    /// `kind` değeri: altyazı.
+    pub const SUBTITLE: &'static str = "subtitle";
 }
 
 impl OverlayMessage {
@@ -45,13 +55,24 @@ mod tests {
     fn tv_protokolu_ile_ayni_json_uretilir() {
         let message = OverlayMessage::new(
             123,
-            vec![OverlayBlock { id: "abc123".into(), x: 0.12, y: 0.81, w: 0.6, h: 0.08, line_h: 0.03, text: "KAPI KİLİTLİ".into() }],
+            vec![OverlayBlock { id: "abc123".into(), x: 0.12, y: 0.81, w: 0.6, h: 0.08, line_h: 0.03, text: "KAPI KİLİTLİ".into(), kind: None }],
         );
 
         assert_eq!(
             message.to_json(),
             r#"{"blocks":[{"h":0.08,"id":"abc123","lineH":0.03,"text":"KAPI KİLİTLİ","w":0.6,"x":0.12,"y":0.81}],"seq":123,"v":1}"#
         );
+    }
+
+    #[test]
+    fn altyazi_turu_yalnizca_varsa_gonderilir_ve_eski_mesaj_okunur() {
+        let block = OverlayBlock { id: "s".into(), x: 0.3, y: 0.8, w: 0.4, h: 0.05, line_h: 0.04, text: "Gidelim.".into(), kind: Some(OverlayBlock::SUBTITLE.into()) };
+        assert_eq!(
+            OverlayMessage::new(2, vec![block]).to_json(),
+            r#"{"blocks":[{"h":0.05,"id":"s","kind":"subtitle","lineH":0.04,"text":"Gidelim.","w":0.4,"x":0.3,"y":0.8}],"seq":2,"v":1}"#
+        );
+        let old: OverlayMessage = serde_json::from_str(r#"{"blocks":[{"h":0.08,"id":"a","lineH":0.03,"text":"X","w":0.6,"x":0.1,"y":0.8}],"seq":1,"v":1}"#).unwrap();
+        assert_eq!(old.blocks[0].kind, None);
     }
 
     #[test]

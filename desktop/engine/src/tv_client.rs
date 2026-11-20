@@ -152,7 +152,7 @@ pub(crate) mod tests {
     }
 
     fn block(text: &str) -> OverlayBlock {
-        OverlayBlock { id: "b1".into(), x: 0.1, y: 0.2, w: 0.3, h: 0.04, line_h: 0.03, text: text.into() }
+        OverlayBlock { id: "b1".into(), x: 0.1, y: 0.2, w: 0.3, h: 0.04, line_h: 0.03, text: text.into(), kind: None }
     }
 
     #[test]

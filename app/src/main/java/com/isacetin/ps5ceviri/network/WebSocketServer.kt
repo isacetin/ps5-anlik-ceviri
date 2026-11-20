@@ -65,8 +65,9 @@ class WebSocketServer(private val port: Int) {
         val remote = call.request.local.remoteAddress
         OverlayState.updateStatus { it.copy(clientCount = clients.incrementAndGet()) }
         Log.i(TAG, "İstemci bağlandı: $remote")
-        // Seq sayacı her bağlantıda sıfırdan başlar.
+        // Seq sayacı her bağlantıda sıfırdan başlar; önceki bağlantının altyazı yığını da.
         val seqGate = SeqGate()
+        OverlayState.onNewConnection()
         try {
             for (frame in incoming) {
                 if (frame !is Frame.Text) continue

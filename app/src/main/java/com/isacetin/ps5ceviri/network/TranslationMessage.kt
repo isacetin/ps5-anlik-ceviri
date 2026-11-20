@@ -7,6 +7,8 @@ import kotlinx.serialization.json.Json
 /**
  * Ekrandaki tek bir çeviri bloğu. Koordinatlar 0..1 aralığında normalize, origin sol üst.
  * [lineH] orijinal satır yüksekliğidir ve font boyutu için başlangıç değeri olarak kullanılır.
+ * [kind] yazının türüdür; şimdilik yalnızca "subtitle" (bkz. `SubtitleStack`). Eski masaüstü
+ * sürümleri göndermez.
  */
 @Serializable
 data class Block(
@@ -17,6 +19,7 @@ data class Block(
     val h: Float,
     val lineH: Float = 0f,
     val text: String,
+    val kind: String? = null,
 )
 
 /** Mac → TV mesajı. [blocks] ekranda olması gereken listenin tamamıdır. */

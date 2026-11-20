@@ -143,6 +143,8 @@ pub struct Diagnostics {
     pub subtitle: SubtitleStats,
     /// Çok satırdan birleşen blok sayısı (oturum).
     pub merged_multiline: u64,
+    /// Son turda kalitesi çok düşük olduğu için atılan OCR satırı sayısı (`ocr_text::reject`).
+    pub ocr_rejected: usize,
 
     // Oyuna duyarlı çeviri
     pub profile: String,

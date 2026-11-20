@@ -6,10 +6,15 @@
 //! 3. Yaygın menü kelimesi (`glossary::lookup`, "Resume") → modele gitmez.
 //! 4. Model: adlar `<x>`, sözlük terimleri `<g>` ile işaretli anahtar. Anahtar, adlar ve sözlük
 //!    değişince kendiliğinden değişir; eski çeviri yanlış sözlükle yeniden kullanılmaz.
+//!
+//! Satırın başında güvenilir bir konuşan etiketi varsa ("ARTHUR: …", `speaker::split`) 2-4 adımları
+//! yalnızca cümleye uygulanır; etiket modele gitmez, gösterimde başa konur. Tam metin düzeltmesi
+//! etiketli haliyle de aranır (eski düzeltmeler geçerli kalır).
 
 use std::collections::HashMap;
 
 use crate::glossary;
+use crate::speaker;
 use crate::profile::{CorrectionKind, GameProfile};
 use crate::term_glossary::{self, Glossary, GlossaryEntry, Layer};
 use crate::terms::Terms;
@@ -26,8 +31,9 @@ pub enum Fixed {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Resolution {
     Ready { text: String, source: Fixed },
-    /// Modele gidecek işaretli metin ve içindeki sözlük terimi sayısı.
-    Model { key: String, glossary_hits: usize },
+    /// Modele gidecek işaretli metin ve içindeki sözlük terimi sayısı. `speaker`: modele
+    /// gitmeyen, gösterimde çevirinin başına konacak konuşan adı.
+    Model { key: String, glossary_hits: usize, speaker: Option<String> },
 }
 
 #[derive(Clone, Debug)]
@@ -81,6 +87,19 @@ impl Resolver {
         if let Some(fixed) = self.overrides.get(&memory_key(text)) {
             return Resolution::Ready { text: fixed.clone(), source: Fixed::Correction };
         }
+        match speaker::split(text, |label| self.terms.is_only_terms(label)) {
+            Some(line) => match self.resolve_sentence(line.body) {
+                Resolution::Ready { text, source } => Resolution::Ready { text: speaker::join(line.label, &text), source },
+                Resolution::Model { key, glossary_hits, .. } => Resolution::Model { key, glossary_hits, speaker: Some(line.label.to_string()) },
+            },
+            None => self.resolve_sentence(text),
+        }
+    }
+
+    fn resolve_sentence(&self, text: &str) -> Resolution {
+        if let Some(fixed) = self.overrides.get(&memory_key(text)) {
+            return Resolution::Ready { text: fixed.clone(), source: Fixed::Correction };
+        }
         if let Some(hit) = self.glossary.whole(text) {
             return Resolution::Ready { text: hit.plain, source: Fixed::Glossary };
         }
@@ -88,7 +107,7 @@ impl Resolver {
             return Resolution::Ready { text: menu.to_string(), source: Fixed::Menu };
         }
         let (key, glossary_hits) = term_glossary::protect(&self.terms, &self.glossary, text);
-        Resolution::Model { key, glossary_hits }
+        Resolution::Model { key, glossary_hits, speaker: None }
     }
 
     pub fn terms(&self) -> &Terms {
@@ -142,18 +161,18 @@ mod tests {
     fn terim_duzeltmesi_sonraki_cevirilerde_kullanilir() {
         let resolver = Resolver::new(Terms::new(&[]), Some(&profile()), &[]);
 
-        assert_eq!(resolver.resolve("Start the Quest now"), Resolution::Model { key: "Start the <g>Sefer</g> now".into(), glossary_hits: 1 });
+        assert_eq!(resolver.resolve("Start the Quest now"), Resolution::Model { key: "Start the <g>Sefer</g> now".into(), glossary_hits: 1, speaker: None });
         assert_eq!(resolver.resolve("Charge!"), Resolution::Ready { text: "Hücum!".into(), source: Fixed::Glossary });
-        assert_eq!(resolver.resolve("Lead the Charge!"), Resolution::Model { key: "Lead the <g>Hücum</g>!".into(), glossary_hits: 1 });
+        assert_eq!(resolver.resolve("Lead the Charge!"), Resolution::Model { key: "Lead the <g>Hücum</g>!".into(), glossary_hits: 1, speaker: None });
         // Profil yokken yerleşik karşılık.
-        assert_eq!(Resolver::default().resolve("Start the Quest now"), Resolution::Model { key: "Start the <g>Görev</g> now".into(), glossary_hits: 1 });
+        assert_eq!(Resolver::default().resolve("Start the Quest now"), Resolution::Model { key: "Start the <g>Görev</g> now".into(), glossary_hits: 1, speaker: None });
     }
 
     #[test]
     fn karakter_adi_korunur_ve_kapsam_profildir() {
         let resolver = Resolver::new(Terms::new(&[]), Some(&profile()), &[]);
 
-        assert_eq!(resolver.resolve("Geralt, wait!"), Resolution::Model { key: "<x>Geralt</x>, wait!".into(), glossary_hits: 0 });
+        assert_eq!(resolver.resolve("Geralt, wait!"), Resolution::Model { key: "<x>Geralt</x>, wait!".into(), glossary_hits: 0, speaker: None });
         assert_eq!(resolver.scope(), "witcher-test");
         assert!(resolver.hint().starts_with("Video game: Witcher Test"));
         assert_eq!(Resolver::default().scope(), "");
@@ -168,11 +187,51 @@ mod tests {
     }
 
     #[test]
+    fn konusan_etiketi_modele_gitmez_gosterimde_kalir() {
+        let resolver = Resolver::new(Terms::new(&[]), Some(&profile()), &[]);
+
+        assert_eq!(
+            resolver.resolve("ARTHUR: We need to go."),
+            Resolution::Model { key: "We need to go.".into(), glossary_hits: 0, speaker: Some("ARTHUR".into()) }
+        );
+        // Etiketsiz aynı cümleyle aynı anahtar: çeviri belleği paylaşılır.
+        assert!(matches!(resolver.resolve("We need to go."), Resolution::Model { key, speaker: None, .. } if key == "We need to go."));
+        // Cümlenin hazır karşılığı varsa etiket başına konur.
+        assert_eq!(resolver.resolve("GERALT: The door is locked."), Resolution::Ready { text: "GERALT: Kapı sürgülü.".into(), source: Fixed::Correction });
+        assert_eq!(resolver.resolve("GERALT: Inventory"), Resolution::Ready { text: "GERALT: Envanter".into(), source: Fixed::Glossary });
+        // Etiketten sonra gelen ad korunur, başlık etiket sayılmaz.
+        assert_eq!(
+            resolver.resolve("Dutch: Geralt, wait!"),
+            Resolution::Model { key: "<x>Geralt</x>, wait!".into(), glossary_hits: 0, speaker: Some("Dutch".into()) }
+        );
+        assert!(matches!(resolver.resolve("Objective: Find the key."), Resolution::Model { speaker: None, .. }));
+    }
+
+    #[test]
+    fn bilinen_karakter_etiketi_baslik_kuralina_takilmaz() {
+        let mut profile = profile();
+        profile.characters.push("Hope".into());
+        let resolver = Resolver::new(Terms::new(&[]), Some(&profile), &[]);
+
+        assert!(matches!(resolver.resolve("Hope: we made it."), Resolution::Model { speaker: Some(s), .. } if s == "Hope"));
+        assert!(matches!(Resolver::default().resolve("Hope: we made it."), Resolution::Model { speaker: None, .. }));
+    }
+
+    #[test]
+    fn etiketli_satirin_tam_duzeltmesi_gecerli_kalir() {
+        let mut profile = profile();
+        profile.add_correction(Correction { kind: CorrectionKind::Text, source: "ARTHUR: Let's ride.".into(), translation: "ARTHUR: Sürelim.".into(), created: 0 }).unwrap();
+        let resolver = Resolver::new(Terms::new(&[]), Some(&profile), &[]);
+
+        assert_eq!(resolver.resolve("ARTHUR: Let's ride."), Resolution::Ready { text: "ARTHUR: Sürelim.".into(), source: Fixed::Correction });
+    }
+
+    #[test]
     fn kullanici_genel_sozlugu_yerlesikten_once_profilden_sonra_gelir() {
         let user = vec![GlossaryEntry::new("Charge", "Şarj"), GlossaryEntry::new("Quest", "Macera")];
 
         let without_profile = Resolver::new(Terms::new(&[]), None, &user);
-        assert_eq!(without_profile.resolve("Quest log"), Resolution::Model { key: "<g>Macera</g> log".into(), glossary_hits: 1 });
+        assert_eq!(without_profile.resolve("Quest log"), Resolution::Model { key: "<g>Macera</g> log".into(), glossary_hits: 1, speaker: None });
         let with_profile = Resolver::new(Terms::new(&[]), Some(&profile()), &user);
         assert_eq!(with_profile.resolve("Charge!"), Resolution::Ready { text: "Hücum!".into(), source: Fixed::Glossary });
         assert_eq!(without_profile.resolve("Charge!"), Resolution::Ready { text: "Şarj!".into(), source: Fixed::Glossary });

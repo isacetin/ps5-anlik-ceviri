@@ -54,6 +54,17 @@ class TranslationMessageTest {
     }
 
     @Test
+    fun `altyazi turu okunur, eski mesajda tur yoktur`() {
+        val message = parseTranslationMessage(
+            """{"v":1,"seq":2,"blocks":[{"h":0.05,"id":"s","kind":"subtitle","lineH":0.04,"text":"Gidelim.","w":0.4,"x":0.3,"y":0.8}]}""",
+        )
+
+        assertEquals("subtitle", message?.blocks?.single()?.kind)
+        val old = parseTranslationMessage("""{"v":1,"seq":1,"blocks":[{"id":"a","x":0,"y":0,"w":1,"h":1,"text":"X"}]}""")
+        assertEquals(null, old?.blocks?.single()?.kind)
+    }
+
+    @Test
     fun `bos blocks listesi gecerlidir`() {
         val message = parseTranslationMessage("""{"v":1,"seq":9,"blocks":[]}""")
 

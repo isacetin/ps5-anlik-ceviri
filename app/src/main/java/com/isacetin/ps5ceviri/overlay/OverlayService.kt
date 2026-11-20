@@ -120,7 +120,7 @@ class OverlayService : Service() {
             return
         }
 
-        val view = TranslationOverlayView(this, ::screenSize)
+        val view = TranslationOverlayView(this, ::screenSize, OverlayState.subtitleStack)
         val params = WindowManager.LayoutParams(
             WindowManager.LayoutParams.MATCH_PARENT,
             WindowManager.LayoutParams.MATCH_PARENT,

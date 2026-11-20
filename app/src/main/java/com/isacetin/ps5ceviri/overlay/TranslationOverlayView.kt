@@ -7,6 +7,8 @@ import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.RectF
 import android.graphics.Typeface
+import android.os.SystemClock
+import android.text.TextUtils
 import android.text.Layout
 import android.text.StaticLayout
 import android.text.TextPaint
@@ -38,20 +40,80 @@ fun PixelRect.widenedTo(targetWidth: Float, screenWidth: Int): PixelRect {
     return copy(left = centered.coerceIn(0f, screenWidth - width), width = width)
 }
 
+private fun RectF.toPixelRect() = PixelRect(left, top, width(), height())
+
+private fun PixelRect.intersects(other: PixelRect) =
+    left < other.left + other.width && other.left < left + width && top < other.top + other.height && other.top < top + height
+
+/** Önceki altyazıların çıkabileceği en üst nokta: ekranın üst güvenli payı ve yığının en çok yüksekliği. */
+fun historyTopLimit(anchorTop: Float, screenHeight: Int): Float =
+    max(screenHeight * SAFE_TOP_RATIO, anchorTop - screenHeight * MAX_STACK_RATIO)
+
+/**
+ * Önceki altyazı kutularının yeri: [anchor] (güncel altyazının kutusu) üstüne, [gap] aralıkla,
+ * yatayda onun ortasına hizalı, alttan üste. [sizes] seviye sırasıyla her kutunun (genişlik,
+ * yükseklik) boyutudur. Bir kutu [topLimit]'in üstüne taşıyor ya da [others]'tan (öbür çeviri
+ * kutuları: HUD, menü) biriyle çakışıyorsa o ve üstündekiler yerleştirilmez. Kutular ekrandan
+ * yatayda taşmaz.
+ */
+fun placeHistory(
+    anchor: PixelRect,
+    sizes: List<Pair<Float, Float>>,
+    gap: Float,
+    topLimit: Float,
+    others: List<PixelRect>,
+    screenWidth: Int,
+): List<PixelRect> {
+    val placed = ArrayList<PixelRect>(sizes.size)
+    var bottom = anchor.top - gap
+    for ((width, height) in sizes) {
+        val w = min(width, screenWidth.toFloat())
+        val left = (anchor.left + anchor.width / 2f - w / 2f).coerceIn(0f, screenWidth - w)
+        val rect = PixelRect(left, bottom - height, w, height)
+        if (rect.top < topLimit || others.any { it.intersects(rect) }) break
+        placed += rect
+        bottom = rect.top - gap
+    }
+    return placed
+}
+
+// Altyazı yığını (önceki satırlar), ekran yüksekliğine oran.
+internal const val STACK_GAP_RATIO = 0.006f
+internal const val SAFE_TOP_RATIO = 0.05f
+internal const val MAX_STACK_RATIO = 0.22f
+
 /**
  * Çeviri bloklarını Canvas üzerine çizen, girdi almayan şeffaf overlay view'ı.
  * Koordinatlar [screenSize]'ın verdiği ekran boyutuna göre hesaplanır; view ekranın
  * (0,0) noktasında değilse çizim konumuna göre kaydırılır.
+ *
+ * [stack] verilirse güncel altyazının önceki satırları (bkz. [SubtitleStack]) altyazı kutusunun
+ * hemen üstüne, daha küçük ve soluk çizilir. Yığın, ekranın üst güvenli payına, ekranın
+ * [MAX_STACK_RATIO]'ından fazlasına ya da başka bir çeviri kutusuna taşacaksa o satır çizilmez:
+ * HUD ve menüler kapanmaz.
  */
 @SuppressLint("ViewConstructor")
 class TranslationOverlayView(
     context: Context,
     private val screenSize: () -> Pair<Int, Int>,
+    private val stack: SubtitleStack? = null,
+    private val clock: () -> Long = SystemClock::elapsedRealtime,
 ) : View(context) {
 
     var mode = DisplayMode.POSITION
 
-    private class RenderedBlock(val background: RectF, val radius: Float, val layout: StaticLayout, val textLeft: Float, val textTop: Float)
+    private class RenderedBlock(
+        val id: String,
+        val background: RectF,
+        val radius: Float,
+        val layout: StaticLayout,
+        val textLeft: Float,
+        val textTop: Float,
+        val fontSize: Float,
+    )
+
+    /** Önceki satırın çizim hâli; metin ve boyut değişmedikçe yeniden kurulmaz. */
+    private class HistoryLayout(val key: String, val layout: StaticLayout, val paint: TextPaint)
 
     private var blocks = emptyList<Block>()
     private var rendered = emptyList<RenderedBlock>()
@@ -63,6 +125,9 @@ class TranslationOverlayView(
         typeface = Typeface.DEFAULT_BOLD
     }
     private val measurePaint = TextPaint(baseTextPaint)
+    private val historyBackground = Paint(backgroundPaint)
+    private var historyLayouts = emptyMap<String, HistoryLayout>()
+    private val redrawStack = Runnable { invalidate() }
 
     init {
         isFocusable = false
@@ -81,14 +146,76 @@ class TranslationOverlayView(
     }
 
     override fun onDraw(canvas: Canvas) {
-        if (rendered.isEmpty()) return
+        val now = clock()
+        val snapshot = stack?.snapshot(now) ?: StackSnapshot.EMPTY
+        if (rendered.isEmpty() && snapshot.lines.isEmpty()) return
         getLocationOnScreen(location)
         canvas.withTranslation(-location[0].toFloat(), -location[1].toFloat()) {
             for (block in rendered) {
                 drawRoundRect(block.background, block.radius, block.radius, backgroundPaint)
                 withTranslation(block.textLeft, block.textTop) { block.layout.draw(this) }
             }
+            drawHistory(this, snapshot)
         }
+        scheduleStackRedraw(now)
+    }
+
+    override fun onDetachedFromWindow() {
+        removeCallbacks(redrawStack)
+        super.onDetachedFromWindow()
+    }
+
+    /** Solma sürerken her karede, yoksa bir sonraki değişim anında yeniden çizilir. */
+    private fun scheduleStackRedraw(now: Long) {
+        removeCallbacks(redrawStack)
+        val next = stack?.nextChangeIn(now) ?: return
+        if (next <= 0L) postInvalidateOnAnimation() else postDelayed(redrawStack, next)
+    }
+
+    private fun drawHistory(canvas: Canvas, snapshot: StackSnapshot) {
+        val anchorBlock = snapshot.anchor ?: return
+        if (snapshot.lines.isEmpty()) return
+        val (screenWidth, screenHeight) = screenSize().takeIf { it.first > 0 && it.second > 0 } ?: (width to height)
+        if (screenWidth <= 0 || screenHeight <= 0) return
+        // Altyazı ekrandaysa onun kutusu; az önce kalktıysa son konumu.
+        val anchor = rendered.firstOrNull { it.id == anchorBlock.id } ?: layoutBlock(anchorBlock, screenWidth, screenHeight)
+        val padding = screenHeight * PADDING_RATIO
+        val gap = screenHeight * STACK_GAP_RATIO
+        val textWidth = (anchor.background.width() - 2 * padding).roundToInt().coerceAtLeast(1)
+        val used = HashMap<String, HistoryLayout>()
+        val lines = snapshot.lines.sortedBy { it.level }
+        val layouts = lines.map { line ->
+            val fontSize = max(anchor.fontSize * line.scale, screenHeight * MIN_FONT_RATIO * 0.8f)
+            val key = "${line.text}|$fontSize|$textWidth"
+            val cached = historyLayouts[key] ?: used[key] ?: run {
+                val paint = TextPaint(baseTextPaint).apply { textSize = fontSize }
+                HistoryLayout(key, buildLayout(line.text, paint, textWidth, maxLines = HISTORY_MAX_LINES), paint)
+            }
+            used[key] = cached
+            cached
+        }
+        val placed = placeHistory(
+            anchor = anchor.background.toPixelRect(),
+            sizes = layouts.map { widestLine(it.layout) + 2 * padding to it.layout.height + 2 * padding },
+            gap = gap,
+            topLimit = historyTopLimit(anchor.background.top, screenHeight),
+            others = rendered.filter { it.id != anchor.id }.map { it.background.toPixelRect() },
+            screenWidth = screenWidth,
+        )
+        for ((index, rect) in placed.withIndex()) {
+            val line = lines[index]
+            val cached = layouts[index]
+            val layout = cached.layout
+            val background = RectF(rect.left, rect.top, rect.left + rect.width, rect.top + rect.height)
+            val alpha = (line.alpha * 255).roundToInt().coerceIn(0, 255)
+            historyBackground.alpha = alpha * backgroundPaint.alpha / 255
+            cached.paint.alpha = alpha
+            cached.paint.setShadowLayer(cached.paint.textSize * 0.12f, 0f, cached.paint.textSize * 0.06f, Color.argb(alpha, 0, 0, 0))
+            val radius = min(background.height() * 0.2f, screenHeight * 0.012f)
+            canvas.drawRoundRect(background, radius, radius, historyBackground)
+            canvas.withTranslation(background.centerX() - layout.width / 2f, background.top + padding) { layout.draw(this) }
+        }
+        historyLayouts = used
     }
 
     private fun rebuild() {
@@ -134,7 +261,7 @@ class TranslationOverlayView(
             max(rect.top + rect.height, textTop + layout.height) + padding,
         )
         val radius = min(background.height() * 0.2f, screenHeight * 0.012f)
-        return RenderedBlock(background, radius, layout, rect.left, textTop)
+        return RenderedBlock(block.id, background, radius, layout, rect.left, textTop, fontSize)
     }
 
     private fun fitFont(text: String, rect: PixelRect, initialSize: Float, minSize: Float, screenHeight: Int): Float =
@@ -157,10 +284,21 @@ class TranslationOverlayView(
         return layout.height <= rect.height * 1.05f && widestLine(layout) <= rect.width
     }
 
-    private fun buildLayout(text: String, paint: TextPaint, width: Int): StaticLayout =
+    /**
+     * Satırlar dengeli bölünür (uzun çeviri üst satırı doldurup alta tek sözcük bırakmaz) ve sözcük
+     * ortasından tirelenmez; yalnızca kutudan geniş tek bir sözcük bölünür.
+     *
+     * `Layout.BREAK_STRATEGY_BALANCED` lint'in istediği `LineBreaker` sabitiyle aynı değerdir (2);
+     * `LineBreaker` API 29'da geldiği için minSdk 26'da `Layout`'unki kullanılır.
+     */
+    @SuppressLint("WrongConstant")
+    private fun buildLayout(text: String, paint: TextPaint, width: Int, maxLines: Int = Int.MAX_VALUE): StaticLayout =
         StaticLayout.Builder.obtain(text, 0, text.length, paint, width.coerceAtLeast(1))
             .setAlignment(Layout.Alignment.ALIGN_CENTER)
             .setIncludePad(false)
+            .setBreakStrategy(Layout.BREAK_STRATEGY_BALANCED)
+            .setHyphenationFrequency(Layout.HYPHENATION_FREQUENCY_NONE)
+            .apply { if (maxLines != Int.MAX_VALUE) setMaxLines(maxLines).setEllipsize(TextUtils.TruncateAt.END) }
             .build()
 
     private fun widestLine(layout: StaticLayout): Float =
@@ -173,5 +311,7 @@ class TranslationOverlayView(
         const val LINE_TO_FONT = 1.15f
         const val MAX_WIDTH_RATIO = 0.9f
         const val PADDING_RATIO = 0.01f
+
+        const val HISTORY_MAX_LINES = 2
     }
 }
